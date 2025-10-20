@@ -1,0 +1,41 @@
+services:
+  # Service 1: Our RAG API
+  rag-api:
+    build: .  # Build from the Dockerfile in this directory
+    container_name: rag-api
+    ports:
+      - "8000:8000"  # Map your Pi's port 8000 to the container's port 8000
+    volumes:
+      # Mount the data directory for ChromaDB and logs
+      - ./data:/app/data
+    # This is the magic: it tells our API to use the LLM service
+    environment:
+      - LLM_API_BASE=http://llm-server:8001/v1
+    depends_on:
+      - llm-server  # Wait for the LLM to start first
+    restart: unless-stopped
+
+  # Service 2: The LLM Server
+  llm-server:
+    # Use a pre-built image, which is much easier!
+    image: ghcr.io/abetlen/llama-cpp-python:latest
+    container_name: llm-server
+    # We pass the same command as before
+    command:
+      - "python"
+      - "-m"
+      - "llama_cpp.server"
+      - "--model"
+      - "/models/open-calm-3b.gguf"
+      - "--n_gpu_layers"
+      - "1"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8001"
+    volumes:
+      # Mount our local model file into the container
+      - ./data/open-calm-3b.gguf:/models/open-calm-3b.gguf:ro # 'ro' = read-only
+    restart: unless-stopped
+    # We DO NOT expose any ports. This server is only accessible
+    # from the private network that Docker creates for our app.
