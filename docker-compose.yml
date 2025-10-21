@@ -17,16 +17,16 @@ services:
 
   # Service 2: The LLM Server
   llm-server:
-    # Use a pre-built image, which is much easier!
-    image: ghcr.io/abetlen/llama-cpp-python:latest
+    build: .
     container_name: llm-server
-    # We pass the same command as before
     command:
+      - "uv"
+      - "run"
       - "python"
       - "-m"
       - "llama_cpp.server"
       - "--model"
-      - "/models/open-calm-3b.gguf"
+      - "/models/gemma-2-2b-jpn-it-q4km.gguf"
       - "--n_gpu_layers"
       - "0"
       - "--host"
@@ -35,7 +35,11 @@ services:
       - "8001"
     volumes:
       # Mount our local model file into the container
-      - ./data/open-calm-3b.gguf:/models/open-calm-3b.gguf:ro # 'ro' = read-only
+      - ./data/gemma-2-2b-jpn-it-q4km.gguf:/models/gemma-2-2b-jpn-it-q4km.gguf:ro # 'ro' = read-only
     restart: unless-stopped
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     # We DO NOT expose any ports. This server is only accessible
     # from the private network that Docker creates for our app.

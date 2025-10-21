@@ -22,10 +22,25 @@ async def lifespan(app: FastAPI):
     logger.info("RAG Service loaded.") # <-- Add log
     print("Service loaded. Application is ready.")
     yield
-    app_state["rag_service"].conn.close()
     logger.info("--- Application Shutting Down ---") # <-- Add log
 
 app = FastAPI(lifespan=lifespan)
+
+def sanitize_dict_keys(d: dict) -> dict:
+    """Removes leading/trailing spaces from keys in a dictionary."""
+    sanitized = {}
+    for key, value in d.items():
+        sanitized_key = key.strip() # Remove leading/trailing spaces
+        # You could add more aggressive cleaning like removing all spaces:
+        # sanitized_key = "".join(key.split()) 
+        sanitized[sanitized_key] = value
+    return sanitized
+
+@app.get("/")
+async def read_root():
+    logger.info("Root endpoint was hit!")
+    return {"Hello": "World"}
+
 
 class DispatchRequest(BaseModel):
     text: str
@@ -34,37 +49,63 @@ class DispatchRequest(BaseModel):
 async def handle_dispatch(request: DispatchRequest):
     """Single endpoint for Siri to call."""
     logger.info(f"Received request from Siri: '{request.text}'")
-    
+
     service: RAGService = app_state["rag_service"]
-    
+
     try:
-        intent_data = service.classify_intent(request.text)
+        # 1. Classify intent
+        raw_intent_data = service.classify_intent(request.text)
+        logger.info(f"Raw LLM classified intent data: {raw_intent_data}")
+
+        # --- ADD THIS LINE TO FIX KEYS ---
+        intent_data = sanitize_dict_keys(raw_intent_data)
+        if raw_intent_data != intent_data:
+            logger.warning(f"Sanitized LLM keys. Original: {raw_intent_data}, Sanitized: {intent_data}")
+        # --- END ADDITION ---
+
         intent = intent_data.get("intent")
-        
+
+        # 2. Route to the correct action
         if intent == "add":
-            service.add(intent_data["item_name"], intent_data["location"])
-            response_text = f"{intent_data['item_name']}を{intent_data['location']}にしまいました。"
-        
+            # Check if location is present before accessing
+            item_name = intent_data.get("item_name")
+            location = intent_data.get("location")
+            if item_name and location:
+                service.add(item_name, location)
+                response_text = f"{item_name}を{location}にしまいました。"
+            else:
+                logger.error(f"Missing 'item_name' or 'location' for add intent. Data: {intent_data}")
+                response_text = "すみません、アイテム名か場所がわかりませんでした。"
+
         elif intent == "delete":
-            service.delete(intent_data["item_name"])
-            response_text = f"{intent_data['item_name']}を削除しました。"
-        
+            item_name = intent_data.get("item_name")
+            if item_name:
+                service.delete(item_name)
+                response_text = f"{item_name}を削除しました。"
+            else:
+                logger.error(f"Missing 'item_name' for delete intent. Data: {intent_data}")
+                response_text = "すみません、どのアイテムかわかりませんでした。"
+
         elif intent == "query":
-            response_text = service.ask(intent_data["item_name"])
-            
-        # --- ADD THIS CONDITION ---
+            item_name = intent_data.get("item_name")
+            if item_name:
+                response_text = service.ask(item_name)
+            else:
+                logger.error(f"Missing 'item_name' for query intent. Data: {intent_data}")
+                response_text = "すみません、どのアイテムかわかりませんでした。"
+
         elif intent == "unknown":
             logger.warning(f"LLM returned 'unknown' intent. Raw text was: {request.text}")
             response_text = "すみません、よくわかりませんでした。"
-        # --- END ADDITION ---
-            
-        else:
-            logger.warning(f"Could not determine intent. Data: {intent_data}")
+
+        else: # Should not happen if LLM returns valid intent
+            logger.warning(f"Unexpected intent value. Data: {intent_data}")
             response_text = "すみません、よくわかりませんでした。"
-            
+
     except Exception as e:
+        # Log the full error including traceback
         logger.error(f"An error occurred processing request: {e}", exc_info=True)
         response_text = "エラーが発生しました。"
-    
+
     logger.info(f"Sending response to Siri: '{response_text}'")
     return {"answer": response_text}

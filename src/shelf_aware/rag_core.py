@@ -1,14 +1,14 @@
-import logging  # <-- ADD THIS
+import logging
 import json
 import chromadb
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 from .config import settings
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
-# Add this at the top of src/shelf_aware/rag_core.py
 import re
 import logging 
-# ... other imports ...
+from . import prompts
 
 logger = logging.getLogger(__name__)
 def extract_json_block(text: str) -> str | None:
@@ -29,9 +29,12 @@ def extract_json_block(text: str) -> str | None:
 print("Loading embedding model...")
 embed_model = SentenceTransformer(settings.EMBEDDING_MODEL)
 print("Embedding model loaded.")
-# ...
+# Connect to the LLM server
+llm_client = OpenAI(
+    api_key=settings.LLM_API_KEY,
+    base_url=settings.LLM_API_BASE,
+)
 
-# --- NEW WRAPPER CLASS ---
 class ChromaEmbeddingWrapper(EmbeddingFunction):
     # ... (no changes to this class) ...
     def __init__(self, sentence_transformer_model):
@@ -59,24 +62,16 @@ class RAGService:
     def classify_intent(self, text: str) -> dict:
         """Uses the LLM to classify the user's intent."""
         logger.debug(f"Classifying intent for: '{text}'")
-        system_prompt = """
-        あなたはユーザーの入力を分析し、3つの意図（query, add, delete）のいずれかに分類するJSONボットです。
-        - 「どこ」「ある？」という質問は 'query' です。
-        - 「しまう」「置いた」という保管は 'add' です。
-        - 「捨てた」「ない」「なくなった」という削除は 'delete' です。
+        system_prompt = prompts.INTENT_CLASSIFICATION_SYSTEM_PROMPT
         
-        以下のJSON形式で回答してください:
-        {"intent": "query", "item_name": "探すアイテム名"}
-        {"intent": "add", "item_name": "アイテム名", "location": "保管場所"}
-        {"intent": "delete", "item_name": "削除するアイテム名"}
-        """
-        
+        # Combine system instructions and user text into a single user message
+        combined_prompt = f"{system_prompt}\n\n---\n\nユーザーの発言:\n{text}"
+
         response = llm_client.chat.completions.create(
             model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": combined_prompt} 
             ],
             temperature=0.1
         )
@@ -138,7 +133,10 @@ class RAGService:
         logger.debug(f"Generated context: {context}") # <-- Add log
 
         # ... (prompt setup and LLM call) ...
-        prompt = f"..." # (shortened for brevity)
+        prompt = prompts.RAG_QUERY_SYSTEM_PROMPT.format(
+            context=context,
+            item_name=item_name
+        )
         
         response = llm_client.chat.completions.create(
             model=settings.LLM_MODEL,
