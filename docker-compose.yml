@@ -29,6 +29,8 @@ services:
       - "/models/gemma-2-2b-jpn-it-q4km.gguf"
       - "--n_gpu_layers"
       - "0"
+      - "--n_threads"
+      - "4"
       - "--host"
       - "0.0.0.0"
       - "--port"

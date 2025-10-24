@@ -71,4 +71,81 @@ This project involved significant debugging and iterative refinement, which is a
   * **Implement "Modify" Intent:** Add functionality to change an item's location (e.g., "I moved the keys to the red box").
   * **Add Timestamps:** Automatically log when an item's location is added or updated.
   * **Web UI:** Create a simple web interface (e.g., using FastAPI's static file serving) to view the entire inventory.
+
+
+## 7\. ShelfAwareRAG Setup Guide
+This guide explains how to set up and run the ShelfAwareRAG application using Docker on a Raspberry Pi 5 (or a similar Linux system).
+
+Prerequisites
+Hardware: Raspberry Pi 5 (8GB RAM recommended) or another Linux machine.
+
+OS: Raspberry Pi OS (64-bit) or a similar Debian-based Linux distribution.
+
+Software:
+
+Git: To clone the repository. (sudo apt update && sudo apt install git -y)
+
+Docker & Docker Compose: Install using the official script:
+
+Bash
+
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker ${USER}
+# Log out and log back in after this step!
+Setup Steps
+Clone the Repository: Open a terminal and clone your project from GitHub. Replace <your-repo-url> with the actual URL.
+
+Bash
+
+git clone <your-repo-url>
+cd ShelfAwareRAG # Or your repository's name
+Download the LLM Model: Download the required GGUF model file into the data directory. (Make sure the docker-compose.yml points to the correct filename).
+
+Bash
+
+# Example using Gemma 2 2B Instruct Q4_K_M
+wget -O data/gemma-2-2b-jpn-it-q4km.gguf \
+https://huggingface.co/grapevine-AI/gemma-2-2b-jpn-it-gguf/resolve/main/gemma-2-2B-jpn-it-Q4_K_M.gguf
+(Optional) Create .env File: If you add any API keys or configurable settings later, create a .env file in the project root and add them there (e.g., MY_API_KEY=...). Currently, this project doesn't strictly require a .env file.
+
+Build the Docker Image: This command builds the container image defined in the Dockerfile. It compiles dependencies and copies your code. This might take several minutes the first time.
+
+Bash
+
+docker compose build
+Run the Application: This command starts both the rag-api and llm-server containers in the background.
+
+Bash
+
+docker compose up -d
+The application will now be running and accessible on port 8000 of your Raspberry Pi's IP address or hostname (e.g., http://raspberrypi.local:8000).
+
+Siri Shortcut Configuration
+Find Pi's Hostname/IP: Use ip addr show or try raspberrypi.local. Assign a static IP via your router if possible.
+
+Create Shortcut: On your iPhone, use the Shortcuts app to create a new shortcut that:
+
+Asks for text input (your query/statement).
+
+Sends a POST request to http://<your-pi-address>:8000/dispatch with a JSON body like {"text": "your input"}.
+
+Parses the JSON response (e.g., {"answer": "..."}) and speaks the "answer" value.
+
+Important: Increase the timeout for the Get Contents of URL action to 60-90 seconds.
+
+Managing the Application
+View Logs: docker compose logs -f rag-api or docker compose logs -f llm-server
+
+Stop Application: docker compose down
+
+Restart Application: docker compose up -d
+
+Update Code:
+
+git pull
+
+docker compose build (Only if code or dependencies changed)
+
+docker compose up -d --force-recreate
   
