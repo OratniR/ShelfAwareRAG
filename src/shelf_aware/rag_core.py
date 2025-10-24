@@ -9,6 +9,7 @@ from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 import re
 import logging 
 from . import prompts
+from . import constants
 
 logger = logging.getLogger(__name__)
 def extract_json_block(text: str) -> str | None:
@@ -114,35 +115,49 @@ class RAGService:
         logger.debug(f"Delete complete for '{item_name}'")
 
     def ask(self, item_name: str) -> str:
-        """Asks the RAG system where an item is."""
+        """Asks the RAG system where an item is, using a similarity threshold from constants."""
         logger.debug(f"Querying for: '{item_name}'")
-        
+
         results = collection.query(
             query_texts=[item_name],
-            n_results=1
+            n_results=1,
+            include=['distances', 'metadatas']
         )
-        logger.debug(f"ChromaDB results: {results}") # <-- Add log
+        logger.debug(f"ChromaDB results (with distance): {results}")
 
-        if not results["ids"][0]:
+        if not results["ids"] or not results["ids"][0]:
             logger.warning(f"No results found for '{item_name}'")
             return f"「{item_name}」に関する情報は見つかりませんでした。"
 
+        # --- 類似度への変換と閾値チェック (定数を使用) ---
+        distance = results["distances"][0][0]
+        similarity = 1 - distance
+        # --- constants.py から閾値を取得 ---
+        threshold = constants.SIMILARITY_THRESHOLD
+        logger.debug(f"Found item distance: {distance}, similarity: {similarity}")
+
+        if similarity < threshold:
+            logger.warning(f"Found item similarity {similarity} is below threshold {threshold} for '{item_name}'")
+            return f"「{item_name}」に関する情報は見つかりませんでした。"
+        # --- 閾値チェックここまで ---
+
         location = results["metadatas"][0][0]["location"]
         found_item = results["ids"][0][0]
-        context = f"- {found_item}は{location}にある。"
-        logger.debug(f"Generated context: {context}") # <-- Add log
+        logger.debug(f"Found relevant item: {found_item} at {location} (similarity: {similarity})")
 
-        # ... (prompt setup and LLM call) ...
-        prompt = prompts.RAG_QUERY_SYSTEM_PROMPT.format(
-            context=context,
-            item_name=item_name
-        )
+        return f"「{found_item}」は{location}にあります。"
         
-        response = llm_client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        answer = response.choices[0].message.content
-        logger.debug(f"LLM generated final answer: {answer}") # <-- Add log
-        return answer
+        # # ... (prompt setup and LLM call) ...
+        # prompt = prompts.RAG_QUERY_SYSTEM_PROMPT.format(
+        #     context=context,
+        #     item_name=item_name
+        # )
+        
+        # response = llm_client.chat.completions.create(
+        #     model=settings.LLM_MODEL,
+        #     messages=[{"role": "user", "content": prompt}],
+        #     temperature=0
+        # )
+        # answer = response.choices[0].message.content
+        # logger.debug(f"LLM generated final answer: {answer}") # <-- Add log
+        # return answer

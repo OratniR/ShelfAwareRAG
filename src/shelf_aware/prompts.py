@@ -45,18 +45,6 @@ INTENT_CLASSIFICATION_SYSTEM_PROMPT = """
     ```json
     {"intent": "delete", "item_name": "牛乳"}
     ```
--   発言：「片栗粉はある？」
-    ```json
-    {"intent": "query", "item_name": "片栗粉"}
-    ```
--   発言：「鰹節はキッチン下の奥に入れた」
-    ```json
-    {"intent": "add", "item_name": "醤油のストック", "location": "押し入れの奥"}
-    ```
--   発言：「みりんのストックがなくなった」
-    ```json
-    {"intent": "delete", "item_name": "みりんのストック"}
-    ```
 </examples>
 
 <final_instruction>
@@ -66,7 +54,7 @@ INTENT_CLASSIFICATION_SYSTEM_PROMPT = """
 
 RAG_QUERY_SYSTEM_PROMPT = """
 以下のコンテキスト情報のみを使用して、ユーザーの質問に答えてください。
-コンテキストに情報がない場合は「わかりません」と答えてください。
+コンテキストに情報がない場合は「{item_name}はないです」と答えてください。
 
 コンテキスト:
 {context}

@@ -7,7 +7,8 @@ LOGGING_CONFIG = {
     "formatters": {
         # Formatter for the console
         "console_formatter": {
-            "format": "%(levelname)s:     %(name)s - %(message)s",
+            "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
         # Formatter for the file
         "file_formatter": {

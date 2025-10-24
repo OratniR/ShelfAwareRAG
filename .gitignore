@@ -21,3 +21,5 @@ __pycache__/
 *.pyc
 
 data/app.log
+
+todo.txt
