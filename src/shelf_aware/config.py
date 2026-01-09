@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     LLM_API_BASE: str = Field(default="http://localhost:8001/v1")
     LLM_API_KEY: str = "unused"
     LLM_MODEL: str = "open-calm-3b"
+    # Add Notion settings
+    NOTION_API_KEY: str = Field(default="")
+    NOTION_DATASOURCE_ID: str = Field(default="")
+    NOTION_ITEM_PROPERTY_NAME: str = "Name" # Name of the property holding the item name
+    NOTION_CHECKBOX_PROPERTY_NAME: str = "購入済み" # Name of the checkbox property
 
     class Config:
         env_file = ".env" # This tells it to load from a .env file

@@ -5,7 +5,7 @@ from .logging_config import LOGGING_CONFIG  # <-- ADD THIS
 logging.config.dictConfig(LOGGING_CONFIG)  # <-- ADD THIS
 logger = logging.getLogger(__name__)
 # Now, import everything else
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from .rag_core import RAGService
@@ -46,7 +46,7 @@ class DispatchRequest(BaseModel):
     text: str
 
 @app.post("/dispatch")
-async def handle_dispatch(request: DispatchRequest):
+async def handle_dispatch(request: DispatchRequest, background_tasks: BackgroundTasks):
     """Single endpoint for Siri to call."""
     logger.info(f"Received request from Siri: '{request.text}'")
 
@@ -71,7 +71,7 @@ async def handle_dispatch(request: DispatchRequest):
             item_name = intent_data.get("item_name")
             location = intent_data.get("location")
             if item_name and location:
-                service.add(item_name, location)
+                service.add(item_name, location, background_tasks)
                 response_text = f"{item_name}を{location}にしまいました。"
             else:
                 logger.error(f"Missing 'item_name' or 'location' for add intent. Data: {intent_data}")
@@ -80,7 +80,7 @@ async def handle_dispatch(request: DispatchRequest):
         elif intent == "delete":
             item_name = intent_data.get("item_name")
             if item_name:
-                service.delete(item_name)
+                service.delete(item_name, background_tasks)
                 response_text = f"{item_name}を削除しました。"
             else:
                 logger.error(f"Missing 'item_name' for delete intent. Data: {intent_data}")

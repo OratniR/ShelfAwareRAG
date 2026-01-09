@@ -1,7 +1,8 @@
 # main.py
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from .rag_core import RAGService  # Your RAG logic
 from pydantic import BaseModel
+
 
 class DispatchRequest(BaseModel):
     text: str  # The Japanese text from Siri
@@ -28,12 +29,13 @@ async def handle_dispatch(request: DispatchRequest):
     elif intent == "add":
         rag_service.add(
             item_name=data["item_name"], 
-            location=data["location"]
+            location=data["location"],
+            background_tasks=BackgroundTasks,
         )
         return {"answer": f"{data['item_name']}を{data['location']}にしまいました。"}
         
     elif intent == "delete":
-        rag_service.delete(data["item_name"])
+        rag_service.delete(data["item_name"], background_tasks=BackgroundTasks)
         return {"answer": f"{data['item_name']}を空にしました。"}
 
     else:
