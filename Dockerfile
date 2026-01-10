@@ -31,7 +31,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 COPY pyproject.toml uv.lock ./
 
 # Install Python packages using uv
-# This step is cached, so it only re-runs if your dependencies change
+RUN uv add notion-client
 # Set CMAKE_ARGS to link llama-cpp-python against OpenBLAS
 RUN CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" uv sync
 
@@ -44,4 +44,4 @@ COPY src/ ./src/
 EXPOSE 8000
 
 # The command to run when the container starts
-CMD ["uv", "run", "uvicorn", "src.shelf_aware.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "src.shelf_aware.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

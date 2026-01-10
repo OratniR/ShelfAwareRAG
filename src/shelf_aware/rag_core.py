@@ -1,15 +1,16 @@
 import logging
 import json
 import chromadb
+from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
-from openai import OpenAI
-from .config import settings
-from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 import re
 import logging 
+from fastapi import BackgroundTasks
+from .config import settings
 from . import prompts
 from . import constants
+from .notion_client import NotionClient
 
 logger = logging.getLogger(__name__)
 def extract_json_block(text: str) -> str | None:
@@ -58,7 +59,8 @@ collection = client.get_or_create_collection(
 # --- RAG Service Class (Add logs here) ---
 class RAGService:
     def __init__(self):
-        logger.info("RAGService initialized.") # <-- Add log
+        self.list_client = NotionClient()
+        logger.info("RAGService initialized.") 
 
     def classify_intent(self, text: str) -> dict:
         """Uses the LLM to classify the user's intent."""
@@ -97,8 +99,7 @@ class RAGService:
             return {"intent": "unknown", "item_name": "unknown"}
         
 
-
-    def add(self, item_name: str, location: str):
+    def add(self, item_name: str, location: str, background_tasks: BackgroundTasks):
         """Adds or updates an item in the database using upsert."""
         logger.info(f"Adding/updating item: '{item_name}' at '{location}'")
         collection.upsert(
@@ -107,12 +108,28 @@ class RAGService:
             documents=[f"{item_name}は{location}にある"]
         )
         logger.debug(f"Upsert complete for '{item_name}'")
+        #update on Notion
+        if self.list_client.is_active():
+            logger.info(f"Scheduling Notion check for '{item_name}'")
+            background_tasks.add_task(self.list_client.remove_item, item_name)
 
-    def delete(self, item_name: str):
+    def delete(self, item_name: str, background_tasks: BackgroundTasks):
         """Deletes an item from the database by its ID."""
         logger.info(f"Deleting item: '{item_name}'")
         collection.delete(ids=[item_name])
         logger.debug(f"Delete complete for '{item_name}'")
+        
+        #update on notion
+        is_notion_active = self.list_client.is_active()
+        logger.info(f"Checking if Notion client is active: {is_notion_active}")
+        if is_notion_active:
+            try:
+                logger.info(f"Scheduling Notion addition for '{item_name}'")
+                background_tasks.add_task(self.list_client.add_item, item_name)
+
+            except Exception as e:
+                logger.error(f"Error during ASYNCHRONOUS Notion addition: {e}", exc_info=True) 
+
 
     def ask(self, item_name: str) -> str:
         """Asks the RAG system where an item is, using a similarity threshold from constants."""

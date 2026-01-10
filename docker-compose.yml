@@ -11,6 +11,8 @@ services:
     # This is the magic: it tells our API to use the LLM service
     environment:
       - LLM_API_BASE=http://llm-server:8001/v1
+      - NOTION_API_KEY=${NOTION_API_KEY}           # Reads from .env or host env
+      - NOTION_DATASOURCE_ID=${NOTION_DATASOURCE_ID}
     depends_on:
       - llm-server  # Wait for the LLM to start first
     restart: unless-stopped
