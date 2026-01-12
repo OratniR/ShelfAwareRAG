@@ -1,81 +1,69 @@
-import logging.config  # <-- ADD THIS
-from .logging_config import LOGGING_CONFIG  # <-- ADD THIS
+import logging.config
+from .logging_config import LOGGING_CONFIG
 
-# Load the logging configuration DICTIONARY
-logging.config.dictConfig(LOGGING_CONFIG)  # <-- ADD THIS
+# Load Logging Config
+logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
-# Now, import everything else
+
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from .rag_core import RAGService
 
-# This dictionary will hold our services
 app_state = {}
 
-# ... app_state and lifespan code (no changes needed) ...
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("--- Application Starting Up ---") # <-- Add log
-    print("Loading RAG Service...") # This print is still fine
+    logger.info("--- Application Starting Up ---")
+    
+    # RAGService内でDAO, Estimator, NotionClientが初期化される
     app_state["rag_service"] = RAGService()
-    logger.info("RAG Service loaded.") # <-- Add log
-    print("Service loaded. Application is ready.")
+    
+    logger.info("RAG Service loaded. Application is ready.")
     yield
-    logger.info("--- Application Shutting Down ---") # <-- Add log
+    logger.info("--- Application Shutting Down ---")
 
 app = FastAPI(lifespan=lifespan)
 
 def sanitize_dict_keys(d: dict) -> dict:
-    """Removes leading/trailing spaces from keys in a dictionary."""
-    sanitized = {}
-    for key, value in d.items():
-        sanitized_key = key.strip() # Remove leading/trailing spaces
-        # You could add more aggressive cleaning like removing all spaces:
-        # sanitized_key = "".join(key.split()) 
-        sanitized[sanitized_key] = value
-    return sanitized
+    """Removes leading/trailing spaces from keys."""
+    return {k.strip(): v for k, v in d.items()}
 
 @app.get("/")
 async def read_root():
-    logger.info("Root endpoint was hit!")
     return {"Hello": "World"}
-
 
 class DispatchRequest(BaseModel):
     text: str
 
 @app.post("/dispatch")
 async def handle_dispatch(request: DispatchRequest, background_tasks: BackgroundTasks):
-    """Single endpoint for Siri to call."""
-    logger.info(f"Received request from Siri: '{request.text}'")
-
+    """
+    Siriからのエントリポイント。
+    Intent分類 -> RAGServiceのメソッド呼び出しを行う。
+    """
+    logger.info(f"Received request: '{request.text}'")
     service: RAGService = app_state["rag_service"]
+    response_text = "すみません、エラーが発生しました。"
 
     try:
-        # 1. Classify intent
+        # 1. Intent Classification
         raw_intent_data = service.classify_intent(request.text)
-        logger.info(f"Raw LLM classified intent data: {raw_intent_data}")
-
-        # --- ADD THIS LINE TO FIX KEYS ---
         intent_data = sanitize_dict_keys(raw_intent_data)
-        if raw_intent_data != intent_data:
-            logger.warning(f"Sanitized LLM keys. Original: {raw_intent_data}, Sanitized: {intent_data}")
-        # --- END ADDITION ---
-
         intent = intent_data.get("intent")
+        
+        logger.info(f"Classified Intent: {intent}, Data: {intent_data}")
 
-        # 2. Route to the correct action
+        # 2. Routing
         if intent == "add":
-            # Check if location is present before accessing
             item_name = intent_data.get("item_name")
             location = intent_data.get("location")
             if item_name and location:
+                # ここで background_tasks を渡すことで、賞味期限推定が裏で走る
                 service.add(item_name, location, background_tasks)
                 response_text = f"{item_name}を{location}にしまいました。"
             else:
-                logger.error(f"Missing 'item_name' or 'location' for add intent. Data: {intent_data}")
-                response_text = "すみません、アイテム名か場所がわかりませんでした。"
+                response_text = "アイテム名か場所が聞き取れませんでした。"
 
         elif intent == "delete":
             item_name = intent_data.get("item_name")
@@ -83,29 +71,24 @@ async def handle_dispatch(request: DispatchRequest, background_tasks: Background
                 service.delete(item_name, background_tasks)
                 response_text = f"{item_name}を削除しました。"
             else:
-                logger.error(f"Missing 'item_name' for delete intent. Data: {intent_data}")
-                response_text = "すみません、どのアイテムかわかりませんでした。"
+                response_text = "どのアイテムを削除するか分かりませんでした。"
 
         elif intent == "query":
             item_name = intent_data.get("item_name")
             if item_name:
                 response_text = service.ask(item_name)
             else:
-                logger.error(f"Missing 'item_name' for query intent. Data: {intent_data}")
-                response_text = "すみません、どのアイテムかわかりませんでした。"
+                response_text = "何を探しているか分かりませんでした。"
 
         elif intent == "unknown":
-            logger.warning(f"LLM returned 'unknown' intent. Raw text was: {request.text}")
             response_text = "すみません、よくわかりませんでした。"
 
-        else: # Should not happen if LLM returns valid intent
-            logger.warning(f"Unexpected intent value. Data: {intent_data}")
-            response_text = "すみません、よくわかりませんでした。"
+        else:
+            logger.warning(f"Unexpected intent: {intent}")
+            response_text = "すみません、意図が理解できませんでした。"
 
     except Exception as e:
-        # Log the full error including traceback
-        logger.error(f"An error occurred processing request: {e}", exc_info=True)
-        response_text = "エラーが発生しました。"
+        logger.error(f"Dispatch Error: {e}", exc_info=True)
+        response_text = "内部エラーが発生しました。"
 
-    logger.info(f"Sending response to Siri: '{response_text}'")
     return {"answer": response_text}

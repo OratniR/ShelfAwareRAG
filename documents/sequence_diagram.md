@@ -1,26 +1,51 @@
 ```mermaid
 sequenceDiagram
-    participant ユーザー
-    participant Siriショートカット
-    participant rag-api
-    participant llm-server
-    participant ChromaDB
+    actor User as ユーザー
+    participant Siri as Siriショートカット
+    participant API as rag-api
+    participant LLM as llm-server
+    participant DB as ChromaDB/SQLite
+    participant Brave as Brave Search API
 
-    ユーザー->>Siriショートカット: 「醤油はどこ？」と話す
-    Siriショートカット->>rag-api: POST /dispatch {text: "醤油はどこ？"}
+    User->>Siri: 「醤油は冷蔵庫に入れた」<br>または「醤油はどこ？」
+    Siri->>API: POST /dispatch {text: "..."}
     
-    Note right of rag-api: 1. 意図分類のリクエスト
-    rag-api->>llm-server: テキストを送信
-    llm-server-->>rag-api: JSONを返す<br>{"intent": "query", "item_name": "醤油"}
+    %% 1. 意図分類
+    rect rgb(240, 248, 255)
+    Note right of API: 1. 意図分類 (Intent Classification)
+    API->>LLM: テキストを送信 (Prompt)
+    LLM-->>API: JSON {"intent": "add" or "query", ...}
+    end
 
-    Note right of rag-api: 2. 在庫データベースを検索
-    rag-api->>ChromaDB: 「醤油」のベクトル検索を実行
-    ChromaDB-->>rag-api: 関連情報を返す<br>(例:「醤油は冷蔵庫の右ポケットにある」)
+    alt Intent == "query" (アイテムを探す)
+        Note right of API: 2a. ベクトル検索 & 回答生成
+        API->>DB: ベクトル検索 (Query)
+        DB-->>API: 関連ドキュメント
+        API->>LLM: コンテキストを含めて回答生成
+        LLM-->>API: 「冷蔵庫にあります」
+        API-->>Siri: JSON {"answer": "..."}
+        Siri->>User: 回答を読み上げ
 
-    Note right of rag-api: 3. 自然な回答を生成
-    rag-api->>llm-server: 検索結果と質問を送信
-    llm-server-->>rag-api: 自然言語の回答を返す<br>「醤油は冷蔵庫の右ポケットにあります。」
+    else Intent == "add" (アイテムを登録)
+        Note right of API: 2b. 保存 & 賞味期限推定
+        API->>DB: アイテム情報を保存 (Insert)
+        
+        %% ユーザーへのレスポンスは先に返す (高速化)
+        API-->>Siri: JSON {"answer": "登録しました"}
+        Siri->>User: 「登録しました」
 
-    rag-api-->>Siriショートカット: JSONレスポンスを返す<br>{"answer": "醤油は冷蔵庫の右ポケットにあります。"}
-    Siriショートカット->>ユーザー: 回答を音声で読み上げる
+        %% 非同期処理 (Background Task)
+        rect rgb(255, 250, 240)
+        Note right of API: [Async] 賞味期限推定プロセス
+        API->>LLM: 食品判定 (Is this food?)
+        
+        opt is_food == true
+            API->>Brave: Web検索 (賞味期限・日持ち)
+            Brave-->>API: 検索結果 (Snippets)
+            API->>LLM: 日数抽出 (Extract Days)
+            LLM-->>API: JSON {"days": 365, ...}
+            API->>DB: DB更新 (Update Expiry Date)
+        end
+        end
+    end
 ```

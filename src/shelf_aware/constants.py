@@ -14,3 +14,13 @@ CHROMA_COLLECTION_NAME = "inventory"
 
 # ディレクトリの自動生成（インポート時に一度だけ実行されるので安全）
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Brave Search Exclusions ---
+# ノイズになりやすいQ&Aサイトやまとめサイトを除外するクエリ
+EXCLUDED_DOMAINS = [
+    "chiebukuro.yahoo.co.jp",
+    "okwave.jp",
+    "oshiete.goo.ne.jp",
+    "detail.chiebukuro.yahoo.co.jp",
+    "komachi.yomiuri.co.jp"
+]

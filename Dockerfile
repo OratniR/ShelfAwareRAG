@@ -31,7 +31,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 COPY pyproject.toml uv.lock ./
 
 # Install Python packages using uv
-RUN uv add notion-client
 # Set CMAKE_ARGS to link llama-cpp-python against OpenBLAS
 RUN CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" uv sync
 

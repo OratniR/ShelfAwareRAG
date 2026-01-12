@@ -1,57 +1,50 @@
-import logging.config
+import os
+import sys
 
-# This dictionary defines your entire logging setup.
+# 環境変数からログレベルを取得 (デフォルトは INFO)
+# 開発時は .env で LOG_LEVEL=DEBUG にすれば詳細ログが出ます
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        # Formatter for the console
-        "console_formatter": {
-            "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-        },
-        # Formatter for the file
-        "file_formatter": {
+        "standard": {
             "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
     "handlers": {
-        # Console handler: prints to your terminal (or systemd journal)
         "console": {
             "class": "logging.StreamHandler",
-            "level": "DEBUG", # Show DEBUG messages on the console
-            "formatter": "console_formatter",
-            "stream": "ext://sys.stderr", # Use stderr for errors
-        },
-        # File handler: saves logs to a file
-        "file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "level": "DEBUG", # Also log DEBUG messages to the file
-            "formatter": "file_formatter",
-            "filename": "data/app.log", # We'll save the log here
-            "maxBytes": 10485760,  # 10MB
-            "backupCount": 3,  # Keep 3 old log files
-            "encoding": "utf8",
+            "level": LOG_LEVEL,
+            "formatter": "standard",
+            "stream": "ext://sys.stdout",  # Dockerログとして扱いやすいようstdoutに出力
         },
     },
     "loggers": {
-        # Logger for our application
+        # アプリケーション自体のロガー
         "shelf_aware": {
-            "level": "DEBUG", # Capture all messages from DEBUG level up
-            "handlers": ["console", "file"], # Send to both console and file
-            "propagate": False, # Don't pass messages to the root logger
+            "level": LOG_LEVEL,
+            "handlers": ["console"],
+            "propagate": False,
         },
-        # Logger for the web server
+        # Webサーバー (Uvicorn) のロガー
         "uvicorn": {
-            "level": "INFO", # Uvicorn's own logs (e.g., "Application startup complete")
-            "handlers": ["console", "file"],
+            "level": "INFO",  # サーバーログはINFOで十分
+            "handlers": ["console"],
+            "propagate": False,
+        },
+        # HTTP通信ライブラリ (httpx) のノイズ抑制
+        "httpx": {
+            "level": "WARNING",  # WARNING以上のみ表示
+            "handlers": ["console"],
             "propagate": False,
         },
     },
-    # The "root" logger catches everything else
+    # その他のライブラリからのログを拾うルートロガー
     "root": {
-        "level": "INFO",
+        "level": "WARNING",
         "handlers": ["console"],
     },
 }

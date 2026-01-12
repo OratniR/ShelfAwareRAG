@@ -1,117 +1,183 @@
 import streamlit as st
 import pandas as pd
-import random
 from shelf_aware.database import InventoryDAO
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# ページ設定
+# --- 設定 ---
 st.set_page_config(page_title="ShelfAware", page_icon="📦", layout="wide")
 
-# スタイル調整（スマホで見やすく）
+# CSS調整
 st.markdown("""
     <style>
     .main .block-container { padding-top: 2rem; }
     h1 { font-size: 1.8rem !important; }
+    div[data-testid="stDataEditor"] table { margin-bottom: 1rem; }
     </style>
     """, unsafe_allow_html=True)
 
+# DAO初期化
 if 'dao' not in st.session_state:
     st.session_state.dao = InventoryDAO()
 
-# --- タイトル（シンプルに） ---
+# --- タイトル ---
 st.title("📦 ShelfAware")
 
-# --- データ読み込み & ダミーデータ生成 ---
-def get_data_with_dummy_expiry():
-    items = st.session_state.dao.get_all_items()
+# --- データ取得 & 実データ計算ロジック ---
+def get_inventory_df():
+    # デフォルトは日付順で取得
+    items = st.session_state.dao.get_all_items(sort_by_date=True)
     if not items:
         return pd.DataFrame()
     
     df = pd.DataFrame(items)
-    # updated_at の整形
-    df['updated_at'] = pd.to_datetime(df['updated_at'])
     
-    # 【ダミーロジック】表示確認用に「残り日数」をランダム生成
-    # 実際には Phase 2 で DB から expiry_date を取得します
-    df['days_left'] = [random.randint(1, 60) for _ in range(len(df))]
+    # 1. 賞味期限 (expiry_date) の変換
+    if 'expiry_date' in df.columns:
+        df['expiry_date'] = pd.to_datetime(df['expiry_date'], errors='coerce')
+    else:
+        df['expiry_date'] = pd.NaT
+
+    # 2. 登録日/更新日 (updated_at) の変換
+    if 'updated_at' in df.columns:
+        df['updated_at'] = pd.to_datetime(df['updated_at'], errors='coerce')
+
+    # 3. 残り日数の計算 (表示用)
+    today = pd.Timestamp.now().normalize()
+    df['days_left'] = (df['expiry_date'] - today).dt.days
     
-    # わざとらしく「危険なアイテム」を数個作る（デモ用）
-    if len(df) > 0:
-        df.loc[0, 'days_left'] = 2  # あと2日
-        if len(df) > 1:
-            df.loc[1, 'days_left'] = 5  # あと5日
-            
+    # 4. 削除チェックボックス用の列を初期化
+    df.insert(0, "削除", False)
+    
     return df
 
-df = get_data_with_dummy_expiry()
+# データをロード
+df = get_inventory_df()
 
 if df.empty:
     st.info("データがありません。Siriでアイテムを追加してください。")
 else:
-    # --- 1. アクションエリア（最優先事項） ---
-    # 賞味期限が近いもの（7日以内）を抽出
-    urgent_items = df[df['days_left'] <= 7].sort_values('days_left')
+    # --- 1. アクションエリア（期限切れ間近のみ） ---
+    urgent_items = df[
+        (df['days_left'].notna()) & 
+        (df['days_left'] <= 7)
+    ].sort_values('days_left')
     
     if not urgent_items.empty:
         st.subheader("⚠️ 早く使いましょう")
-        # 横並びのカラムでカード風に表示
-        cols = st.columns(len(urgent_items) if len(urgent_items) < 3 else 3)
+        cols = st.columns(min(len(urgent_items), 3))
         for idx, (_, row) in enumerate(urgent_items.iterrows()):
-            # 3つまで表示
             if idx < 3:
                 with cols[idx]:
-                    # 赤枠のアラート表示
+                    days = int(row['days_left'])
+                    if days < 0:
+                        msg = f"🔥 {abs(days)}日 期限切れ"
+                    elif days == 0:
+                        msg = "⚡️ 今日まで！"
+                    else:
+                        msg = f"⏳ 残り {days} 日"
+
                     st.error(
                         f"**{row['id']}**\n\n"
                         f"📍 {row['location']}\n\n"
-                        f"⏳ 残り {row['days_left']} 日目安"
+                        f"{msg}"
                     )
-    else:
-        st.success("🎉 現在、賞味期限切れ間近のアイテムはありません！")
-
-    # --- 2. 検索 & 全リスト ---
-    st.divider()
-    col_search, col_sort = st.columns([2, 1])
-    search_q = col_search.text_input("🔍 アイテムを探す", placeholder="アイテム名、場所...")
     
-    # フィルタリング
+    st.divider()
+
+    # --- 2. 検索 & 編集リスト ---
+    col_header, col_search = st.columns([2, 1])
+    with col_header:
+        st.write("📝 **在庫リスト (ヘッダーをクリックしてソート可能)**")
+    search_q = col_search.text_input("🔍 検索", placeholder="アイテム名...")
+    
+    # 検索フィルタ
     if search_q:
         df = df[df.apply(lambda row: search_q.lower() in row.astype(str).str.lower().values, axis=1)]
 
-    # 表示用データフレームの整形
-    display_df = df.copy()
-    display_df['更新日'] = display_df['updated_at'].dt.strftime('%m/%d')
+    # 表示・編集するカラムの定義（updated_at を追加）
+    display_cols = ['削除', 'id', 'location', 'expiry_date', 'is_estimated', 'updated_at']
     
-    # カラム並び替え: アイテム名を一番左に
-    display_df = display_df[['id', 'location', 'days_left', 'updated_at']]
-    display_df = display_df.rename(columns={
-        'id': 'アイテム名',
-        'location': '場所'
-    })
-
-    # テーブル表示（文字色などはStreamlit標準に任せて視認性確保）
-    st.dataframe(
-        display_df,
+    # --- エディタ本体 ---
+    edited_df = st.data_editor(
+        df[display_cols], 
         column_config={
-            "アイテム名": st.column_config.TextColumn("アイテム名", width="medium"),
-            "場所": st.column_config.TextColumn("場所", width="small"),
-            "days_left": st.column_config.ProgressColumn(
-                "期限目安",
-                help="賞味期限までの残り日数",
-                format="%d 日",
-                min_value=0,
-                max_value=30,  # 30日以下でバーが動き出すイメージ
+            "削除": st.column_config.CheckboxColumn(
+                "削除", width="small", default=False
             ),
-            "updated_at": st.column_config.DatetimeColumn("最終確認", format="M/D")
+            "id": st.column_config.TextColumn(
+                "アイテム名", width="medium", disabled=True
+            ),
+            "location": st.column_config.TextColumn(
+                "場所", width="small"
+            ),
+            "expiry_date": st.column_config.DateColumn(
+                "賞味期限", width="medium", format="YYYY-MM-DD"
+            ),
+            "is_estimated": st.column_config.SelectboxColumn(
+                "ステータス",
+                width="medium",
+                options=[0, 1, 2],
+                format_func=lambda x: {
+                    0: "🕒 未処理",
+                    1: "✅ 推定済",
+                    2: "🚫 対象外"
+                }.get(x, str(x)),
+                required=True
+            ),
+            # 【追加】登録日（更新日）の設定
+            "updated_at": st.column_config.DatetimeColumn(
+                "登録日",
+                format="MM/DD HH:mm", # 見やすいように年月日時分だけ表示
+                width="medium",
+                disabled=True # 自動更新されるものなので編集不可にする
+            )
         },
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        key="inventory_editor"
     )
 
-    # --- 3. クイック削除 ---
-    with st.expander("🗑️ 使い切ったアイテムを消す"):
-        to_delete = st.selectbox("アイテムを選択", df['id'].unique(), key="delete_box")
-        if st.button("削除実行"):
-            st.session_state.dao.delete_item(to_delete)
-            st.toast(f"「{to_delete}」を削除しました")
+    # --- 3. 保存ボタン ---
+    col_save, _ = st.columns([1, 4])
+    
+    if col_save.button("💾 変更を保存 & 削除を実行", type="primary"):
+        updated_count = 0
+        deleted_count = 0
+        
+        progress_bar = st.progress(0)
+        total_rows = len(edited_df)
+
+        for idx, row in edited_df.iterrows():
+            item_id = row['id']
+            
+            # A. 削除チェックがある場合 -> 削除
+            if row['削除']:
+                st.session_state.dao.delete_item(item_id)
+                deleted_count += 1
+            
+            # B. 更新処理
+            else:
+                e_date = row['expiry_date']
+                date_str = None
+                if pd.notnull(e_date):
+                    date_str = e_date.strftime('%Y-%m-%d')
+                
+                st.session_state.dao.update_item_state(
+                    item_id=item_id,
+                    expiry_date=date_str,
+                    is_estimated=int(row['is_estimated'])
+                )
+                updated_count += 1
+            
+            progress_bar.progress((idx + 1) / total_rows)
+        
+        # 完了メッセージ
+        msg = []
+        if updated_count > 0: msg.append(f"{updated_count}件を更新")
+        if deleted_count > 0: msg.append(f"{deleted_count}件を削除")
+        
+        if msg:
+            st.success(f"完了しました: {'、'.join(msg)}")
             st.rerun()
+        else:
+            st.info("変更はありませんでした")

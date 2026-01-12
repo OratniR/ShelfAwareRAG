@@ -4,9 +4,9 @@ from pydantic import Field
 class Settings(BaseSettings):
     DB_PATH: str = "data/inventory.db"
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-small"
-    LLM_API_BASE: str = Field(default="http://localhost:8001/v1")
+    LLM_API_BASE: str = Field(default="http://llm-server:8001/v1")
     LLM_API_KEY: str = "unused"
-    LLM_MODEL: str = "open-calm-3b"
+    LLM_MODEL: str = "gemma-2-2b-jpn-it-q2km.gguf"
     # Add Notion settings
     NOTION_API_KEY: str = Field(default="")
     NOTION_DATASOURCE_ID: str = Field(default="")
