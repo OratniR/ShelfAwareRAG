@@ -51,3 +51,19 @@ services:
         hard: -1
     # We DO NOT expose any ports. This server is only accessible
     # from the private network that Docker creates for our app.
+
+  # Service 3: The Streamlit Dashboard
+  dashboard:
+    build: .
+    container_name: dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    environment:
+      - PYTHONPATH=/app/src
+    command: ["uv", "run", "streamlit", "run", "src/shelf_aware/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    depends_on:
+      - rag-api
+    restart: unless-stopped

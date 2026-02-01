@@ -22,10 +22,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-# DELETE THIS LINE (it's no longer needed):
-# ENV PATH="/root/.local/bin:$PATH"
-
-# === END FIX ===
+# Add .venv/bin to PATH so python/streamlit commands work directly
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy ONLY the dependency files first
 COPY pyproject.toml uv.lock ./
