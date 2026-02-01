@@ -12,29 +12,35 @@ from .rag_core import RAGService
 
 app_state = {}
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("--- Application Starting Up ---")
-    
-    # RAGService内でDAO, Estimator, NotionClientが初期化される
+
+    # RAGService内でDAO, Estimator, NotionShoppingListClientが初期化される
     app_state["rag_service"] = RAGService()
-    
+
     logger.info("RAG Service loaded. Application is ready.")
     yield
     logger.info("--- Application Shutting Down ---")
 
+
 app = FastAPI(lifespan=lifespan)
+
 
 def sanitize_dict_keys(d: dict) -> dict:
     """Removes leading/trailing spaces from keys."""
     return {k.strip(): v for k, v in d.items()}
 
+
 @app.get("/")
 async def read_root():
     return {"Hello": "World"}
 
+
 class DispatchRequest(BaseModel):
     text: str
+
 
 @app.post("/dispatch")
 async def handle_dispatch(request: DispatchRequest, background_tasks: BackgroundTasks):
@@ -51,7 +57,7 @@ async def handle_dispatch(request: DispatchRequest, background_tasks: Background
         raw_intent_data = service.classify_intent(request.text)
         intent_data = sanitize_dict_keys(raw_intent_data)
         intent = intent_data.get("intent")
-        
+
         logger.info(f"Classified Intent: {intent}, Data: {intent_data}")
 
         # 2. Routing

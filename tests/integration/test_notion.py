@@ -1,10 +1,11 @@
 # tests/test_notion.py (ファイル名も test_ で始めるのが一般的)
 import logging
 import sys
-import pytest 
+import pytest
 import os
+
 current_path = os.getcwd()
-from src.shelf_aware.notion_client import NotionClient
+from src.shelf_aware.notion_client import NotionShoppingListClient
 from src.shelf_aware.config import settings
 
 # --- ロギング設定 (pytestは自身のロギング機構も持つが、個別設定も可能) ---
@@ -12,11 +13,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 # -----------------------------
 logger.debug(f"Pytest is running at {current_path}")
+
 
 # --- pytestで実行されるテスト関数 ---
 def test_notion_connection_and_operations():
@@ -25,12 +27,14 @@ def test_notion_connection_and_operations():
 
     # 設定確認 (pytestでは @pytest.mark.skipif を使うこともできる)
     if not settings.NOTION_API_KEY or not settings.NOTION_DATASOURCE_ID:
-        pytest.skip("Notion API Key or Database ID not configured. Skipping test.") # テストをスキップ
+        pytest.skip(
+            "Notion API Key or Database ID not configured. Skipping test."
+        )  # テストをスキップ
 
     logger.info(f"Using Notion Datasource ID: {settings.NOTION_DATASOURCE_ID}")
 
     # NotionClientを初期化
-    client = NotionClient()
+    client = NotionShoppingListClient()
 
     # クライアントがアクティブかチェック (アサーションを使う)
     assert client.is_active(), "Notion client failed to initialize."
@@ -45,7 +49,9 @@ def test_notion_connection_and_operations():
     # ここで実際にNotionに追加されたかを確認するアサーションを追加する
     page = client._find_item_page(test_item_add)
     assert page is not None
-    assert page["properties"][settings.NOTION_CHECKBOX_PROPERTY_NAME]["checkbox"] is False
+    assert (
+        page["properties"][settings.NOTION_CHECKBOX_PROPERTY_NAME]["checkbox"] is False
+    )
     logger.info("Add/uncheck operation attempted.")
 
     # 2. アイテム削除/チェックテスト
