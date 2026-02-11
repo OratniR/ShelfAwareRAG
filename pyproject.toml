@@ -27,6 +27,7 @@ extra-index-url = "https://download.pytorch.org/whl/cpu"
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.3.0",
+    "ruff>=0.11.0",
 ]
 # pyproject.toml を開き、末尾の pytest 設定を確認・修正してください
 
@@ -36,4 +37,12 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "integration: marks tests as integration tests (slow, requires env)",
+    "e2e: marks tests as end-to-end tests (requires running server)",
 ]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
