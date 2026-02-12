@@ -5,7 +5,7 @@ import pytest
 import os
 
 current_path = os.getcwd()
-from src.shelf_aware.notion_client import NotionShoppingListClient
+from src.shelf_aware.notion_handler import NotionShoppingListClient
 from src.shelf_aware.config import settings
 
 # --- ロギング設定 (pytestは自身のロギング機構も持つが、個別設定も可能) ---

@@ -9,7 +9,7 @@ from . import prompts
 from . import constants
 
 # 外部連携モジュール
-from .notion_client import NotionShoppingListClient
+from .notion_handler import NotionShoppingListClient
 from .database import InventoryDAO  # <--- 追加: DB操作の委譲先
 from .estimation import ExpirationEstimator  # <--- 追加: 賞味期限推定
 from shelf_aware.estimation import EstimationResult  # Enumをインポート

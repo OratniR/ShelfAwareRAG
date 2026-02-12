@@ -15,6 +15,7 @@ wheels/
 # Data
 data/chroma_db/
 data/*.gguf
+data/models/
 
 # Python Caches
 __pycache__/
