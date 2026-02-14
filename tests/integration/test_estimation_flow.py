@@ -1,7 +1,12 @@
 import asyncio
-import os
+
+# Mock settings and logger
+import logging
 import sys
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+from shelf_aware.database import InventoryDAO
+from shelf_aware.estimation import EstimationResult, ExpirationEstimator
 
 # MOCK httpx before importing src
 sys.modules["httpx"] = MagicMock()
@@ -11,16 +16,6 @@ sys.modules["chromadb.api.types"] = MagicMock()
 sys.modules["pydantic_settings"] = MagicMock()
 sys.modules["pydantic"] = MagicMock()
 
-# Add src to path
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src"))
-)
-
-from shelf_aware.estimation import ExpirationEstimator, EstimationResult
-from shelf_aware.database import InventoryDAO
-
-# Mock settings and logger
-import logging
 
 logging.basicConfig(level=logging.INFO)
 
@@ -64,9 +59,7 @@ async def test_estimation_flow():
     dao.update_expiry.assert_called_with("Test Food", "2026-03-01")
 
     # CASE 2: Estimator returns SKIPPED (e.g. no API key)
-    estimator.estimate_expiration = AsyncMock(
-        return_value={"status": EstimationResult.SKIPPED, "data": None}
-    )
+    estimator.estimate_expiration = AsyncMock(return_value={"status": EstimationResult.SKIPPED, "data": None})
 
     print("\n--- Testing SKIPPED Case ---")
     item_name = "Skipped Item"

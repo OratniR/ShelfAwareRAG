@@ -1,5 +1,5 @@
-from pydantic_settings import BaseSettings
 from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -12,9 +12,7 @@ class Settings(BaseSettings):
     # Add Notion settings
     NOTION_API_KEY: str = Field(default="")
     NOTION_DATASOURCE_ID: str = Field(default="")
-    NOTION_ITEM_PROPERTY_NAME: str = (
-        "Name"  # Name of the property holding the item name
-    )
+    NOTION_ITEM_PROPERTY_NAME: str = "Name"  # Name of the property holding the item name
     NOTION_CHECKBOX_PROPERTY_NAME: str = "購入済み"  # Name of the checkbox property
 
     class Config:

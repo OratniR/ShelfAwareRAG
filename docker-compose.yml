@@ -43,7 +43,7 @@ services:
       - "8001"
     volumes:
       # Mount our local model file into the container
-      - ./data/${MODEL_FILENAME}:/models/${MODEL_FILENAME}:ro # 'ro' = read-only
+    - ./data/models:/models:ro
     restart: unless-stopped
     ulimits:
       memlock:

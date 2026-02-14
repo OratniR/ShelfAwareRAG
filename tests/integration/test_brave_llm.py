@@ -1,13 +1,19 @@
 # tests/integration/test_integration.py
-import pytest
 import os
+
 import httpx
+import pytest
 from dotenv import load_dotenv
+
 from shelf_aware.estimation import ExpirationEstimator
+
 load_dotenv()
+
+
 @pytest.fixture
 def estimator():
     return ExpirationEstimator()
+
 
 @pytest.mark.asyncio
 @pytest.mark.integration
@@ -20,12 +26,13 @@ async def test_real_brave_search_connection(estimator):
     assert result_text is not None
     assert len(result_text) > 0
 
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_llm_json_format(estimator):
     # LLMサーバーのURL確認
     llm_url = os.getenv("LLM_API_URL", "http://localhost:8000/v1/chat/completions")
-    
+
     async with httpx.AsyncClient() as client:
         try:
             await client.get(llm_url.replace("/chat/completions", "/models"), timeout=3.0)

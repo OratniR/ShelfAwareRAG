@@ -1,14 +1,16 @@
 import logging.config
+from contextlib import asynccontextmanager
+
+from fastapi import BackgroundTasks, FastAPI
+from pydantic import BaseModel
+
 from .logging_config import LOGGING_CONFIG
+from .rag_core import RAGService
 
 # Load Logging Config
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks
-from pydantic import BaseModel
-from contextlib import asynccontextmanager
-from .rag_core import RAGService
 
 app_state = {}
 

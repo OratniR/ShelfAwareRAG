@@ -1,8 +1,9 @@
 from pathlib import Path
+
 # プロジェクトのルートディレクトリ (ShelfAwareRAG/) を取得
 # constants.py が src/shelf_aware/ にある前提
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SIMILARITY_THRESHOLD=0.7 #RAGのretrieval結果の閾値　これより低ければ，該当結果はないとする
+SIMILARITY_THRESHOLD = 0.7  # RAGのretrieval結果の閾値　これより低ければ，該当結果はないとする
 
 # データディレクトリの設定
 DATA_DIR = PROJECT_ROOT / "data"
@@ -22,5 +23,5 @@ EXCLUDED_DOMAINS = [
     "okwave.jp",
     "oshiete.goo.ne.jp",
     "detail.chiebukuro.yahoo.co.jp",
-    "komachi.yomiuri.co.jp"
+    "komachi.yomiuri.co.jp",
 ]
