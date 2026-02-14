@@ -1,12 +1,14 @@
 # tests/test_notion.py (ファイル名も test_ で始めるのが一般的)
 import logging
-import sys
-import pytest
 import os
+import sys
+
+import pytest
+
+from src.shelf_aware.config import settings
+from src.shelf_aware.notion_handler import NotionShoppingListClient
 
 current_path = os.getcwd()
-from src.shelf_aware.notion_handler import NotionShoppingListClient
-from src.shelf_aware.config import settings
 
 # --- ロギング設定 (pytestは自身のロギング機構も持つが、個別設定も可能) ---
 logging.basicConfig(
@@ -27,9 +29,7 @@ def test_notion_connection_and_operations():
 
     # 設定確認 (pytestでは @pytest.mark.skipif を使うこともできる)
     if not settings.NOTION_API_KEY or not settings.NOTION_DATASOURCE_ID:
-        pytest.skip(
-            "Notion API Key or Database ID not configured. Skipping test."
-        )  # テストをスキップ
+        pytest.skip("Notion API Key or Database ID not configured. Skipping test.")  # テストをスキップ
 
     logger.info(f"Using Notion Datasource ID: {settings.NOTION_DATASOURCE_ID}")
 
@@ -49,9 +49,7 @@ def test_notion_connection_and_operations():
     # ここで実際にNotionに追加されたかを確認するアサーションを追加する
     page = client._find_item_page(test_item_add)
     assert page is not None
-    assert (
-        page["properties"][settings.NOTION_CHECKBOX_PROPERTY_NAME]["checkbox"] is False
-    )
+    assert page["properties"][settings.NOTION_CHECKBOX_PROPERTY_NAME]["checkbox"] is False
     logger.info("Add/uncheck operation attempted.")
 
     # 2. アイテム削除/チェックテスト

@@ -1,5 +1,4 @@
 import os
-import sys
 
 # 環境変数からログレベルを取得 (デフォルトは INFO)
 # 開発時は .env で LOG_LEVEL=DEBUG にすれば詳細ログが出ます

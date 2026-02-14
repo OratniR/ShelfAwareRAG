@@ -1,14 +1,16 @@
 # src/shelf_aware/scheduler.py
-import logging
 import asyncio
+import logging
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 # Local modules
 from shelf_aware.database import InventoryDAO
-from shelf_aware.estimation import ExpirationEstimator, EstimationResult
+from shelf_aware.estimation import EstimationResult, ExpirationEstimator
 
 logger = logging.getLogger(__name__)
+
 
 class BackfillScheduler:
     def __init__(self):
@@ -16,9 +18,9 @@ class BackfillScheduler:
         # 共通のDAOを使用する（競合回避のため、Estimatorにはこれを渡す）
         self.dao = InventoryDAO()
         self.estimator = ExpirationEstimator()
-        
+
         # 安全装置: 月間制限の9割を超えたらバックフィルは停止する
-        self.SAFETY_QUOTA_LIMIT = 1800 
+        self.SAFETY_QUOTA_LIMIT = 1800
         # 1日あたりの処理件数（API節約のため）
         self.DAILY_BATCH_SIZE = 5
 
@@ -35,7 +37,7 @@ class BackfillScheduler:
         未処理アイテムに対して推定を試み、結果に応じてステータスを確定させる。
         """
         logger.info("🧹 Starting Daily Backfill Job...")
-        
+
         # 1. Quota Check (安全装置)
         current_usage = self.dao.get_current_usage("brave_search")
         if current_usage > self.SAFETY_QUOTA_LIMIT:
@@ -48,16 +50,16 @@ class BackfillScheduler:
             logger.info("✅ No items need backfilling.")
             return
 
-        target_ids = [t['id'] for t in targets]
+        target_ids = [t["id"] for t in targets]
         logger.info(f"📋 Backfill Targets: {target_ids}")
 
         # 3. Processing Loop
         for item in targets:
-            item_name = item['id']
+            item_name = item["id"]
             try:
                 # Estimatorに self.dao を渡して実行 (Connection共有)
                 result_packet = await self.estimator.estimate_expiration(item_name, self.dao)
-                
+
                 status = result_packet["status"]
                 data = result_packet["data"]
 
@@ -79,7 +81,7 @@ class BackfillScheduler:
 
                 else:
                     logger.warning(f"❓ Unknown status for {item_name}: {status}")
-                
+
                 # APIへの配慮（インターバル）
                 await asyncio.sleep(2)
 

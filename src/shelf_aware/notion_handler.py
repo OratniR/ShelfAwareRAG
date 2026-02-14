@@ -1,5 +1,7 @@
 import logging
-from notion_client import Client, APIResponseError, APIErrorCode
+
+from notion_client import APIErrorCode, APIResponseError, Client
+
 from .config import settings
 from .interfaces import ShoppingListClient
 
@@ -27,15 +29,13 @@ class NotionShoppingListClient(ShoppingListClient):
             try:
                 self.notion = Client(
                     auth=settings.NOTION_API_KEY,
-                    notion_version="2025-09-03",  
+                    notion_version="2025-09-03",
                 )
                 # Test connection by retrieving the datasource object
                 # Replaced deprecated/incorrect data_sources.retrieve with datasources.retrieve
                 self.notion.data_sources.retrieve(data_source_id=self.data_source_id)
 
-                logger.info(
-                    f"Successfully connected to Notion and verified datasource ID: {self.data_source_id}"
-                )
+                logger.info(f"Successfully connected to Notion and verified datasource ID: {self.data_source_id}")
 
             except APIResponseError as e:
                 logger.error(
@@ -51,7 +51,9 @@ class NotionShoppingListClient(ShoppingListClient):
                 self.notion = None  # Disable on other errors
         else:
             logger.warning(
-                f"Notion API Key or datasource ID not configured. Notion integration disabled.\n NOTION_API_KEY:{'***' if settings.NOTION_API_KEY else 'None'}\n self.data_source_id:{self.data_source_id}"
+                f"Notion API Key or datasource ID not configured.\
+                Notion integration disabled.\n NOTION_API_KEY:{'***' if settings.NOTION_API_KEY else 'None'}\n \
+                self.data_source_id:{self.data_source_id}"
             )
             self.notion = None  # Ensure client is None if not configured
 
@@ -66,9 +68,7 @@ class NotionShoppingListClient(ShoppingListClient):
             return None
 
         item_name_stripped = item_name.strip()
-        logger.debug(
-            f"Querying Notion for item: '{item_name_stripped}' using data_source_id: {self.data_source_id}"
-        )
+        logger.debug(f"Querying Notion for item: '{item_name_stripped}' using data_source_id: {self.data_source_id}")
 
         try:
             response = self.notion.data_sources.query(
@@ -81,22 +81,16 @@ class NotionShoppingListClient(ShoppingListClient):
 
             if response and response.get("results"):
                 page = response["results"][0]
-                logger.debug(
-                    f"Found Notion page for '{item_name_stripped}': ID {page['id']}"
-                )
+                logger.debug(f"Found Notion page for '{item_name_stripped}': ID {page['id']}")
                 return page
             else:
                 logger.debug(f"No Notion page found for '{item_name_stripped}'")
                 return None
         except APIResponseError as e:
             if e.code == APIErrorCode.RateLimited:
-                logger.warning(
-                    "Notion API rate limit exceeded. Please wait before retrying."
-                )
+                logger.warning("Notion API rate limit exceeded. Please wait before retrying.")
             elif e.code == APIErrorCode.ValidationError:
-                logger.error(
-                    f"Notion API Validation Error during query (check datasource schema/ID?): {e}"
-                )
+                logger.error(f"Notion API Validation Error during query (check datasource schema/ID?): {e}")
             else:
                 logger.error(
                     f"API Error querying Notion datasource for '{item_name_stripped}': {e}",
@@ -124,30 +118,22 @@ class NotionShoppingListClient(ShoppingListClient):
                 logger.info(f"Calling pages.update for page_id: {existing_page['id']}")
                 is_checked = existing_page["properties"][self.checkbox_prop]["checkbox"]
                 if is_checked:
-                    logger.info(
-                        f"Item '{item_name_stripped}' exists but is checked. Unchecking in Notion."
-                    )
+                    logger.info(f"Item '{item_name_stripped}' exists but is checked. Unchecking in Notion.")
                     self.notion.pages.update(
                         page_id=existing_page["id"],
                         properties={self.checkbox_prop: {"checkbox": False}},
                     )
                     logger.info("pages.update successful.")
                 else:
-                    logger.info(
-                        f"Item '{item_name_stripped}' already exists and is unchecked in Notion."
-                    )
+                    logger.info(f"Item '{item_name_stripped}' already exists and is unchecked in Notion.")
             else:
                 logger.info("Calling pages.create...")
 
                 logger.info(f"Adding item '{item_name_stripped}' to Notion datasource.")
                 self.notion.pages.create(
-                    parent={
-                        "data_source_id": self.data_source_id
-                    },  # FIX: Changed data_source_id to data_source_id
+                    parent={"data_source_id": self.data_source_id},  # FIX: Changed data_source_id to data_source_id
                     properties={
-                        self.item_prop: {
-                            "title": [{"text": {"content": item_name_stripped}}]
-                        },
+                        self.item_prop: {"title": [{"text": {"content": item_name_stripped}}]},
                         self.checkbox_prop: {"checkbox": False},
                     },
                 )
@@ -175,9 +161,7 @@ class NotionShoppingListClient(ShoppingListClient):
         if existing_page:
             is_checked = existing_page["properties"][self.checkbox_prop]["checkbox"]
             if not is_checked:
-                logger.info(
-                    f"Marking item '{item_name_stripped}' as checked in Notion."
-                )
+                logger.info(f"Marking item '{item_name_stripped}' as checked in Notion.")
                 try:
                     self.notion.pages.update(
                         page_id=existing_page["id"],
@@ -194,10 +178,6 @@ class NotionShoppingListClient(ShoppingListClient):
                         exc_info=True,
                     )
             else:
-                logger.info(
-                    f"Item '{item_name_stripped}' is already checked in Notion."
-                )
+                logger.info(f"Item '{item_name_stripped}' is already checked in Notion.")
         else:
-            logger.info(
-                f"Item '{item_name_stripped}' not found in Notion. Cannot mark as checked."
-            )
+            logger.info(f"Item '{item_name_stripped}' not found in Notion. Cannot mark as checked.")

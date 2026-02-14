@@ -1,18 +1,20 @@
-import logging
 import json
+import logging
+
 from fastapi import BackgroundTasks
 from openai import OpenAI
 
+from shelf_aware.estimation import EstimationResult  # Enumをインポート
+
+from . import constants, prompts
+
 # 設定と定数
 from .config import settings
-from . import prompts
-from . import constants
+from .database import InventoryDAO  # <--- 追加: DB操作の委譲先
+from .estimation import ExpirationEstimator  # <--- 追加: 賞味期限推定
 
 # 外部連携モジュール
 from .notion_handler import NotionShoppingListClient
-from .database import InventoryDAO  # <--- 追加: DB操作の委譲先
-from .estimation import ExpirationEstimator  # <--- 追加: 賞味期限推定
-from shelf_aware.estimation import EstimationResult  # Enumをインポート
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +43,7 @@ llm_client = OpenAI(
 # 依存関係(dao, estimator)を持つため、今回はサービスクラス内のメソッドとして呼び出す形をとる
 
 
-async def run_estimation_task(
-    item_name: str, estimator: ExpirationEstimator, dao: InventoryDAO
-):
+async def run_estimation_task(item_name: str, estimator: ExpirationEstimator, dao: InventoryDAO):
     """賞味期限推定を実行し、結果に応じてDBを更新する"""
     logger.info(f"⏳ Estimating expiration for: {item_name}")
     try:
@@ -55,9 +55,7 @@ async def run_estimation_task(
         if status == EstimationResult.SUCCESS and data:
             # 成功: 日付を更新 (is_estimated -> 1)
             dao.update_expiry(item_name, data["expiry_date"])
-            logger.info(
-                f"✅ Expiry Updated: {item_name} -> {data['expiry_date']} (約{data['days_offset']}日)"
-            )
+            logger.info(f"✅ Expiry Updated: {item_name} -> {data['expiry_date']} (約{data['days_offset']}日)")
 
         elif status == EstimationResult.NON_FOOD:
             # 食品ではない: 対象外マーク (is_estimated -> 2)
@@ -66,9 +64,7 @@ async def run_estimation_task(
 
         else:
             # スキップ/エラー: ログだけ出して何もしない（次回リトライ対象のまま）
-            logger.info(
-                f"⏭️ Skipped expiration update for: {item_name} (Status: {status})"
-            )
+            logger.info(f"⏭️ Skipped expiration update for: {item_name} (Status: {status})")
 
     except Exception as e:
         logger.error(f"❌ Estimation task failed for {item_name}: {e}")
@@ -122,9 +118,7 @@ class RAGService:
 
         # 3. 賞味期限推定 (非同期) - 新機能
         #    依存オブジェクト(estimator, dao)を渡して実行
-        background_tasks.add_task(
-            run_estimation_task, item_name, self.estimator, self.dao
-        )
+        background_tasks.add_task(run_estimation_task, item_name, self.estimator, self.dao)
 
     def delete(self, item_name: str, background_tasks: BackgroundTasks):
         """Deletes item from SQLite & Chroma (via DAO), then syncs Notion."""
@@ -147,9 +141,7 @@ class RAGService:
         logger.debug(f"Querying for: '{item_name}'")
 
         # DAOが保持しているcollectionを使って検索
-        results = self.dao.collection.query(
-            query_texts=[item_name], n_results=1, include=["distances", "metadatas"]
-        )
+        results = self.dao.collection.query(query_texts=[item_name], n_results=1, include=["distances", "metadatas"])
         logger.debug(f"ChromaDB results: {results}")
 
         if not results["ids"] or not results["ids"][0]:
@@ -161,9 +153,7 @@ class RAGService:
         threshold = constants.SIMILARITY_THRESHOLD
 
         if similarity < threshold:
-            logger.warning(
-                f"Similarity {similarity:.2f} < threshold {threshold} for '{item_name}'"
-            )
+            logger.warning(f"Similarity {similarity:.2f} < threshold {threshold} for '{item_name}'")
             return f"「{item_name}」に関する情報は見つかりませんでした。"
 
         location = results["metadatas"][0][0]["location"]

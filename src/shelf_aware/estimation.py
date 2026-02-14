@@ -1,20 +1,20 @@
 # src/shelf_aware/estimation.py
-import os
-import httpx
-import json
-import math
-import statistics
-import logging
 import asyncio
-import time
-import re
 import datetime as dt
-from typing import List, Optional, Dict, Any, TYPE_CHECKING
+import json
+import logging
+import math
+import re
+import statistics
+import time
 from enum import Enum
+from typing import TYPE_CHECKING, Any, Dict, List
 
-from shelf_aware.prompts import EXPIRATION_ESTIMATION_PROMPT, FOOD_CLASSIFICATION_PROMPT
+import httpx
+
 from shelf_aware.config import settings
 from shelf_aware.constants import EXCLUDED_DOMAINS
+from shelf_aware.prompts import EXPIRATION_ESTIMATION_PROMPT, FOOD_CLASSIFICATION_PROMPT
 
 if TYPE_CHECKING:
     from shelf_aware.database import InventoryDAO
@@ -51,9 +51,7 @@ class ExpirationEstimator:
         self._lock = asyncio.Lock()
         self.MONTHLY_LIMIT = 2000
 
-    async def estimate_expiration(
-        self, item_name: str, dao: "InventoryDAO"
-    ) -> Dict[str, Any]:
+    async def estimate_expiration(self, item_name: str, dao: "InventoryDAO") -> Dict[str, Any]:
         # 1. 名前クリーニング ("オリーブオイルのストック" -> "オリーブオイル")
         clean_name = self._clean_item_name(item_name)
         if clean_name != item_name:
@@ -89,11 +87,7 @@ class ExpirationEstimator:
 
         if estimated_days:
             # 【修正】dt.datetime.now() と dt.timedelta を使用
-            expiry_date = (
-                (dt.datetime.now() + dt.timedelta(days=estimated_days))
-                .date()
-                .isoformat()
-            )
+            expiry_date = (dt.datetime.now() + dt.timedelta(days=estimated_days)).date().isoformat()
             return {
                 "status": EstimationResult.SUCCESS,
                 "data": {
@@ -135,9 +129,7 @@ class ExpirationEstimator:
         async with httpx.AsyncClient() as client:
             try:
                 # Raspberry Pi用にタイムアウトを大幅延長 (10s -> 60s)
-                resp = await client.post(
-                    self.llm_api_url, json=payload, headers=headers, timeout=120.0
-                )
+                resp = await client.post(self.llm_api_url, json=payload, headers=headers, timeout=120.0)
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
                 content = content.replace("```json", "").replace("```", "").strip()
@@ -159,11 +151,9 @@ class ExpirationEstimator:
             if elapsed < 1.1:
                 await asyncio.sleep(1.1 - elapsed)
 
-            can_execute = dao.check_and_increment_usage(
-                "brave_search", self.MONTHLY_LIMIT
-            )
+            can_execute = dao.check_and_increment_usage("brave_search", self.MONTHLY_LIMIT)
             if not can_execute:
-                logger.error(f"⛔ Monthly limit reached.")
+                logger.error("⛔ Monthly limit reached.")
                 return ""
 
             # 実行時刻を更新
@@ -182,9 +172,7 @@ class ExpirationEstimator:
 
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(
-                    url, headers=headers, params=params, timeout=60.0
-                )
+                resp = await client.get(url, headers=headers, params=params, timeout=60.0)
                 if resp.status_code == 429:
                     return ""
                 resp.raise_for_status()
@@ -205,9 +193,7 @@ class ExpirationEstimator:
         logger.info(f"context:\n{context}")
         safe_context = context[:800]
         logger.info(f"safe_context:\n{safe_context}")
-        prompt = EXPIRATION_ESTIMATION_PROMPT.format(
-            item_name=item_name, context_text=safe_context
-        )
+        prompt = EXPIRATION_ESTIMATION_PROMPT.format(item_name=item_name, context_text=safe_context)
 
         payload = {
             "messages": [{"role": "user", "content": prompt}],
@@ -225,9 +211,7 @@ class ExpirationEstimator:
         async with httpx.AsyncClient() as client:
             try:
                 # 抽出は時間がかかるので120秒待つ
-                resp = await client.post(
-                    self.llm_api_url, json=payload, headers=headers, timeout=120.0
-                )
+                resp = await client.post(self.llm_api_url, json=payload, headers=headers, timeout=120.0)
                 resp.raise_for_status()
                 result = resp.json()
                 content = result["choices"][0]["message"]["content"]
