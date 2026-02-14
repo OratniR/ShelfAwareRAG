@@ -1,4 +1,5 @@
 # src/shelf_aware/database.py
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -9,6 +10,8 @@ from sentence_transformers import SentenceTransformer
 
 from shelf_aware.config import settings
 from shelf_aware.constants import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR, SQLITE_DB_PATH
+
+logger = logging.getLogger(__name__)
 
 
 class ChromaEmbeddingWrapper(EmbeddingFunction):
@@ -62,6 +65,12 @@ class InventoryDAO:
                     service TEXT NOT NULL,    -- 'brave_search' 等
                     count INTEGER DEFAULT 0,
                     updated_at TIMESTAMP
+                )
+            """)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_chroma_deletions (
+                    item_id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP NOT NULL
                 )
             """)
 
@@ -122,10 +131,63 @@ class InventoryDAO:
         return [dict(row) for row in cursor.fetchall()]
 
     def delete_item(self, item_id: str):
-        """両方のDBから削除 (一貫性を維持)"""
+        """両方のDBから削除 (一貫性を維持) - ダッシュボード等の同期処理用"""
+        self.delete_item_from_sqlite(item_id)
+        self.delete_item_from_chroma(item_id)
+
+    def delete_item_from_sqlite(self, item_id: str):
+        """SQLiteからのみ削除 (高速・同期処理向け)"""
         with self.conn:
             self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+
+    def delete_item_from_chroma(self, item_id: str):
+        """ChromaDBからのみ削除 (バックグラウンド処理向け)"""
         self.collection.delete(ids=[item_id])
+
+    def add_pending_deletion(self, item_id: str):
+        """ChromaDB削除のpendingレコードを追加"""
+        now = datetime.now().isoformat()
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO pending_chroma_deletions (item_id, created_at) VALUES (?, ?)",
+                (item_id, now),
+            )
+
+    def remove_pending_deletion(self, item_id: str):
+        """ChromaDB削除成功後にpendingレコードを削除"""
+        with self.conn:
+            self.conn.execute("DELETE FROM pending_chroma_deletions WHERE item_id = ?", (item_id,))
+
+    def get_pending_deletions(self) -> List[str]:
+        """未処理のChromaDB削除対象を全件取得"""
+        cursor = self.conn.execute("SELECT item_id FROM pending_chroma_deletions")
+        return [row["item_id"] for row in cursor.fetchall()]
+
+    def delete_item_from_chroma_with_cleanup(self, item_id: str):
+        """ChromaDB削除 + pending解消 (BackgroundTask用)"""
+        try:
+            self.collection.delete(ids=[item_id])
+            self.remove_pending_deletion(item_id)
+            logger.info(f"ChromaDB delete complete for '{item_id}'")
+        except Exception as e:
+            logger.error(f"ChromaDB delete failed for '{item_id}', will retry on next startup: {e}")
+
+    def process_pending_deletions(self) -> int:
+        """未処理の削除を一括リトライ（起動時に呼ぶ）"""
+        pending = self.get_pending_deletions()
+        if not pending:
+            return 0
+        logger.info(f"🔄 Retrying {len(pending)} pending ChromaDB deletions: {pending}")
+        success_count = 0
+        for item_id in pending:
+            try:
+                self.collection.delete(ids=[item_id])
+                self.remove_pending_deletion(item_id)
+                success_count += 1
+                logger.info(f"  ✅ Retry success: '{item_id}'")
+            except Exception as e:
+                logger.error(f"  ❌ Retry failed: '{item_id}': {e}")
+        return success_count
 
     def sync_existing_chroma_data(self):
         """【重要】既存のChromaDBデータをSQLiteにインポートする一回限りのスクリプト"""

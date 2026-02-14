@@ -22,6 +22,12 @@ async def lifespan(app: FastAPI):
     # RAGService内でDAO, Estimator, NotionShoppingListClientが初期化される
     app_state["rag_service"] = RAGService()
 
+    # 前回起動時に失敗したChromaDB削除をリトライ
+    service: RAGService = app_state["rag_service"]
+    retried = service.dao.process_pending_deletions()
+    if retried > 0:
+        logger.info(f"Retried {retried} pending ChromaDB deletions on startup")
+
     logger.info("RAG Service loaded. Application is ready.")
     yield
     logger.info("--- Application Shutting Down ---")
@@ -77,7 +83,7 @@ async def handle_dispatch(request: DispatchRequest, background_tasks: Background
             item_name = intent_data.get("item_name")
             if item_name:
                 service.delete(item_name, background_tasks)
-                response_text = f"{item_name}を削除しました。"
+                response_text = f"{item_name}の削除を受け付けました。"
             else:
                 response_text = "どのアイテムを削除するか分かりませんでした。"
 
