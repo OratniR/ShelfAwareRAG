@@ -1,5 +1,6 @@
 # tests/integration/test_integration.py
 import os
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -15,14 +16,23 @@ def estimator():
     return ExpirationEstimator()
 
 
+@pytest.fixture
+def mock_dao():
+    """Mock DAO for tests that need it but don't test DB logic."""
+    dao = MagicMock()
+    dao.check_and_increment_usage.return_value = True
+    dao.get_current_usage.return_value = 0
+    return dao
+
+
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_brave_search_connection(estimator):
+async def test_real_brave_search_connection(estimator, mock_dao):
     if not os.getenv("BRAVE_API_KEY"):
         pytest.skip("BRAVE_API_KEY is not set")
 
     query = "納豆 賞味期限 日持ち"
-    result_text = await estimator._search_brave(query)
+    result_text = await estimator._search_brave(query, mock_dao)
     assert result_text is not None
     assert len(result_text) > 0
 
