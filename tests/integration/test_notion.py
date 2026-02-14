@@ -5,8 +5,8 @@ import sys
 
 import pytest
 
-from src.shelf_aware.config import settings
-from src.shelf_aware.notion_handler import NotionShoppingListClient
+from shelf_aware.config import settings
+from shelf_aware.notion_handler import NotionShoppingListClient
 
 current_path = os.getcwd()
 

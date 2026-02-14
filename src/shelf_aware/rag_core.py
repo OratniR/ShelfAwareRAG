@@ -121,14 +121,20 @@ class RAGService:
         background_tasks.add_task(run_estimation_task, item_name, self.estimator, self.dao)
 
     def delete(self, item_name: str, background_tasks: BackgroundTasks):
-        """Deletes item from SQLite & Chroma (via DAO), then syncs Notion."""
+        """Deletes item from SQLite (sync) & Chroma (async via BackgroundTasks), then syncs Notion."""
         logger.info(f"Deleting item: '{item_name}'")
 
-        # 1. DB削除 (SQLite + ChromaDB)
-        self.dao.delete_item(item_name)
-        logger.debug(f"DAO delete complete for '{item_name}'")
+        # 1. Pending登録 (同期) — ChromaDB削除の受付証
+        self.dao.add_pending_deletion(item_name)
 
-        # 2. Notion同期 (非同期)
+        # 2. SQLite削除 (同期・高速)
+        self.dao.delete_item_from_sqlite(item_name)
+        logger.debug(f"SQLite delete complete for '{item_name}'")
+
+        # 3. ChromaDB削除 + pending解消 (非同期・重い処理)
+        background_tasks.add_task(self.dao.delete_item_from_chroma_with_cleanup, item_name)
+
+        # 4. Notion同期 (非同期)
         if self.list_client.is_active():
             try:
                 logger.info(f"Scheduling Notion addition for '{item_name}'")

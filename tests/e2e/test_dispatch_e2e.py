@@ -134,7 +134,7 @@ class TestFullLifecycle:
             json={"text": f"{item}を削除して"},
         )
         assert resp.status_code == 200
-        assert "削除" in resp.json()["answer"]
+        assert "削除" in resp.json()["answer"] or "受け付けました" in resp.json()["answer"]
 
         # 4. Query again → should NOT be found
         resp = client.post(
