@@ -1,20 +1,9 @@
 import asyncio
-
-# Mock settings and logger
 import logging
-import sys
 from unittest.mock import AsyncMock, MagicMock
 
 from shelf_aware.database import InventoryDAO
 from shelf_aware.estimation import EstimationResult, ExpirationEstimator
-
-# MOCK httpx before importing src
-sys.modules["httpx"] = MagicMock()
-sys.modules["sentence_transformers"] = MagicMock()
-sys.modules["chromadb"] = MagicMock()
-sys.modules["chromadb.api.types"] = MagicMock()
-sys.modules["pydantic_settings"] = MagicMock()
-sys.modules["pydantic"] = MagicMock()
 
 
 logging.basicConfig(level=logging.INFO)
