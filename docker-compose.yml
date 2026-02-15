@@ -37,14 +37,16 @@ services:
       - "0"
       - "--n_threads"
       - "4"
+      - "--n_batch"
+      - "256"
       - "--n_ctx"
       - "2048"
-      - "--flash_attn"
+      - "--type_k"      # KV Cache量子化（Key）
+      - "2"
+      - "--type_v"      # KV Cache量子化（Value）
+      - "2"
+      - "--flash_attn"  # Flash Attention
       - "true"
-      - "--type_k"
-      - "2"
-      - "--type_v"
-      - "2"
       - "--cache"
       - "true"
       - "--cache_size"
