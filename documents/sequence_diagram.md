@@ -9,7 +9,7 @@ sequenceDiagram
 
     User->>Siri: 「醤油は冷蔵庫に入れた」<br>または「醤油はどこ？」
     Siri->>API: POST /dispatch {text: "..."}
-    
+
     %% 1. 意図分類
     rect rgb(240, 248, 255)
     Note right of API: 1. 意図分類 (Intent Classification)
@@ -29,7 +29,7 @@ sequenceDiagram
     else Intent == "add" (アイテムを登録)
         Note right of API: 2b. 保存 & 賞味期限推定
         API->>DB: アイテム情報を保存 (Insert)
-        
+
         %% ユーザーへのレスポンスは先に返す (高速化)
         API-->>Siri: JSON {"answer": "登録しました"}
         Siri->>User: 「登録しました」
@@ -38,7 +38,7 @@ sequenceDiagram
         rect rgb(255, 250, 240)
         Note right of API: [Async] 賞味期限推定プロセス
         API->>LLM: 食品判定 (Is this food?)
-        
+
         opt is_food == true
             API->>Brave: Web検索 (賞味期限・日持ち)
             Brave-->>API: 検索結果 (Snippets)

@@ -41,4 +41,3 @@ def client(base_url, _check_server_reachable, _warmup_llm):
     """httpx client scoped to the entire test session."""
     with httpx.Client(base_url=base_url, timeout=120.0) as c:
         yield c
-
