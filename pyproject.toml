@@ -25,6 +25,7 @@ extra-index-url = "https://download.pytorch.org/whl/cpu"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.5.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.11.0",

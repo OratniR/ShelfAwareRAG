@@ -1,0 +1,19 @@
+# .pre-commit-config.yaml
+repos:
+  # 1. 基本的なファイルチェック
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace   # 行末の無駄なスペース削除
+      - id: end-of-file-fixer     # ファイル末尾に必ず改行を入れる
+      - id: check-yaml            # YAMLの構文チェック
+      - id: check-added-large-files # 巨大なファイルのコミット防止
+
+  # 2. Ruff (Linter & Formatter) - 最速・最強のツール
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruffのバージョンはプロジェクトに合わせて固定するのがベスト
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [ --fix ]  # Linterエラーを自動修正
+      - id: ruff-format # Formatter (Blackの代わり)

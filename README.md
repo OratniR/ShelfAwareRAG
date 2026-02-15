@@ -148,4 +148,3 @@ git pull
 docker compose build (Only if code or dependencies changed)
 
 docker compose up -d --force-recreate
-  

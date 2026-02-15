@@ -44,4 +44,3 @@ async def test_call_llm_clean_json(estimator):
         result = await estimator._call_llm("納豆", "context")
         assert result["is_food"] is True
         assert result["extracted_days"] == [7]
-
