@@ -32,7 +32,7 @@ graph TD
 
     %% Branch B: Add (Register) & Background Task
     API -- "3b. [登録] 場所を書き込む" --> DB
-    
+
     %% Async Flow (Dotted lines)
     API -. "4b. (裏で) 賞味期限わかる？" .-> Worker
     Worker -- "食べ物？" --> AI

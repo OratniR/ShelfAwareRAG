@@ -11,11 +11,11 @@ graph TD
 
     subgraph "Raspberry Pi 5 (Docker)"
         subgraph "Private Docker Network"
-            
+
             %% Common Step: Intent Classification
             E -- 1. Classify Intent --> F(llm-server)
             F -- "2. Intent Result" --> E
-            
+
             E --> DECISION{Intent Type?}
 
             %% Flow A: Query (Search)
@@ -27,7 +27,7 @@ graph TD
             %% Flow B: Add (Register & Estimate)
             DECISION -- "Add (登録)" --> G
             G -- 3. Save Item --> E
-            
+
             %% Background Task (Async)
             E -. "4. Async Task: Expiry Est." .-> EST[Estimation Worker]
             EST -- "Is Food?" --> F
@@ -39,11 +39,11 @@ graph TD
             EST -- "Update DB" --> G
         end
     end
-    
+
     %% Final Response to User
     E -- Response JSON --> B
     B -- "Siri Speaks Response" --> A
-    
+
     %% Styling
     style BS fill:#fff,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
     style EST fill:#ff9,stroke:#333,stroke-width:2px

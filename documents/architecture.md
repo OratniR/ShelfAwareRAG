@@ -18,7 +18,7 @@ graph TD
         OS --> DKR["🐳 Docker / Docker Compose"]
 
         subgraph DKR [Docker Containers]
-            
+
             subgraph "rag-api container"
                 direction TB
                 FAPI["🚀 FastAPI"]
