@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 from shelf_aware.database import InventoryDAO
 from shelf_aware.estimation import EstimationResult, ExpirationEstimator
 
-
 logging.basicConfig(level=logging.INFO)
 
 
