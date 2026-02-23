@@ -20,7 +20,7 @@ st.markdown(
 
 # DAO初期化
 if "dao" not in st.session_state:
-    st.session_state.dao = InventoryDAO()
+    st.session_state.dao = InventoryDAO(use_chroma=False)
 
 # --- タイトル ---
 st.title("📦 ShelfAware")
