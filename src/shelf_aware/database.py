@@ -34,6 +34,10 @@ class InventoryDAO:
         self.conn = sqlite3.connect(str(SQLITE_DB_PATH), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
+        # 複数コンテナ(rag-api, dashboard)からの同時アクセスを安全にする設定
+        self.conn.execute("PRAGMA journal_mode=WAL;")  # WALモードで並行読み書きを許可
+        self.conn.execute("PRAGMA busy_timeout=5000;")  # ロック競合時に5秒待機してリトライ
+
         # テーブル作成とスキーマ更新を初期化時に実行
         self._create_table()
         self._migrate_schema()
