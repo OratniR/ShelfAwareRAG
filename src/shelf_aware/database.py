@@ -30,7 +30,7 @@ class ChromaEmbeddingWrapper(EmbeddingFunction):
 
 
 class InventoryDAO:
-    def __init__(self):
+    def __init__(self, use_chroma: bool = True):
         self.conn = sqlite3.connect(str(SQLITE_DB_PATH), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
@@ -42,14 +42,17 @@ class InventoryDAO:
         self._create_table()
         self._migrate_schema()
 
-        self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
-        # 設定ファイル(settings)からモデル名を取得して初期化
-        self.embedding_fn = ChromaEmbeddingWrapper(settings.EMBEDDING_MODEL)
+        # ChromaDB初期化 (dashboardなど不要なコンテナではスキップ)
+        self.collection = None
+        if use_chroma:
+            self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+            # 設定ファイル(settings)からモデル名を取得して初期化
+            self.embedding_fn = ChromaEmbeddingWrapper(settings.EMBEDDING_MODEL)
 
-        # embedding_functionを明示的に渡すことで、デフォルト(MiniLM)のDLを防ぐ
-        self.collection = self.chroma_client.get_or_create_collection(
-            name=CHROMA_COLLECTION_NAME, embedding_function=self.embedding_fn
-        )
+            # embedding_functionを明示的に渡すことで、デフォルト(MiniLM)のDLを防ぐ
+            self.collection = self.chroma_client.get_or_create_collection(
+                name=CHROMA_COLLECTION_NAME, embedding_function=self.embedding_fn
+            )
 
     def _create_table(self):
         """新規作成用"""
@@ -124,9 +127,12 @@ class InventoryDAO:
             )
 
         # 2. ChromaDB: ID(name)で上書き
-        self.collection.upsert(
-            ids=[name], metadatas=[{"location": location, "updated_at": now}], documents=[f"{name}は{location}にある"]
-        )
+        if self.collection is not None:
+            self.collection.upsert(
+                ids=[name],
+                metadatas=[{"location": location, "updated_at": now}],
+                documents=[f"{name}は{location}にある"],
+            )
 
     def get_all_items(self, sort_by_date: bool = True):
         """ダッシュボード用の全件取得 (SQLiteから高速取得)"""
@@ -137,7 +143,11 @@ class InventoryDAO:
     def delete_item(self, item_id: str):
         """両方のDBから削除 (一貫性を維持) - ダッシュボード等の同期処理用"""
         self.delete_item_from_sqlite(item_id)
-        self.delete_item_from_chroma(item_id)
+        if self.collection is not None:
+            self.delete_item_from_chroma(item_id)
+        else:
+            # ChromaDB未接続時はpendingに追加し、rag-api起動時にリトライ
+            self.add_pending_deletion(item_id)
 
     def delete_item_from_sqlite(self, item_id: str):
         """SQLiteからのみ削除 (高速・同期処理向け)"""
@@ -146,7 +156,8 @@ class InventoryDAO:
 
     def delete_item_from_chroma(self, item_id: str):
         """ChromaDBからのみ削除 (バックグラウンド処理向け)"""
-        self.collection.delete(ids=[item_id])
+        if self.collection is not None:
+            self.collection.delete(ids=[item_id])
 
     def add_pending_deletion(self, item_id: str):
         """ChromaDB削除のpendingレコードを追加"""
@@ -169,6 +180,8 @@ class InventoryDAO:
 
     def delete_item_from_chroma_with_cleanup(self, item_id: str):
         """ChromaDB削除 + pending解消 (BackgroundTask用)"""
+        if self.collection is None:
+            return
         try:
             self.collection.delete(ids=[item_id])
             self.remove_pending_deletion(item_id)
@@ -293,9 +306,10 @@ class InventoryDAO:
             # IDが存在すれば更新、なければ無視されるupsertを利用しても良いが、
             # ここではシンプルにSQLiteマスターで運用し、検索用indexの更新は必須ではない（検索対象はテキストなので）
             # 必要であれば以下を追加：
-            try:
-                self.collection.update(ids=[item_id], metadatas=[{"updated_at": now}])
+            if self.collection is not None:
+                try:
+                    self.collection.update(ids=[item_id], metadatas=[{"updated_at": now}])
 
-            except Exception as e:
-                print(e)
-                pass
+                except Exception as e:
+                    print(e)
+                    pass
