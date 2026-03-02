@@ -16,6 +16,9 @@ services:
       - NOTION_API_KEY=${NOTION_API_KEY}           # Reads from .env or host env
       - NOTION_DATASOURCE_ID=${NOTION_DATASOURCE_ID}
       - BRAVE_API_KEY=${BRAVE_API_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
       - PYTHONPATH=/app/src
     depends_on:
       - llm-server  # Wait for the LLM to start first
