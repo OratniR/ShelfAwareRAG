@@ -1,7 +1,9 @@
 services:
   # Service 1: Our RAG API
   rag-api:
-    build: .  # Build from the Dockerfile in this directory
+    build:
+      context: .
+      target: api
     container_name: rag-api
     ports:
       - "8000:8000"  # Map your Pi's port 8000 to the container's port 8000
@@ -26,7 +28,9 @@ services:
 
   # Service 2: The LLM Server
   llm-server:
-    build: .
+    build:
+      context: .
+      target: llm
     container_name: llm-server
     command:
       - "uv"
@@ -71,7 +75,9 @@ services:
 
   # Service 3: The Streamlit Dashboard
   dashboard:
-    build: .
+    build:
+      context: .
+      target: dashboard
     container_name: dashboard
     ports:
       - "8501:8501"
@@ -84,3 +90,4 @@ services:
     depends_on:
       - rag-api
     restart: unless-stopped
+
