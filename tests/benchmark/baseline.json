@@ -1,11 +1,18 @@
 {
   "model": "gemma-2-2b-jpn-it-q2km.gguf",
-  "accuracy": 0.0,
+  "accuracy": 70.0,
   "category_scores": {
-    "明らかな食品": 0.0,
-    "紛らわしい食品": 0.0,
-    "明らかな非食品": 0.0,
-    "紛らわしい非食品": 0.0
+    "明らかな食品": 100.0,
+    "紛らわしい食品": 100.0,
+    "明らかな非食品": 50.0,
+    "紛らわしい非食品": 28.57142857142857
   },
-  "note": "Initial baseline — will be updated after first benchmark run"
+  "latency": {
+    "p50": 16.61,
+    "p95": 21.771,
+    "mean": 17.067,
+    "stdev": 1.704,
+    "min": 15.872,
+    "max": 22.05
+  }
 }
