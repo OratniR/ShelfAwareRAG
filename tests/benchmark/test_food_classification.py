@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from langfuse import get_client, observe
 
 from shelf_aware.config import settings
 from shelf_aware.estimation import ExpirationEstimator
@@ -77,6 +78,14 @@ class TestFoodClassificationBenchmark:
         asyncio.get_event_loop().run_until_complete(estimator._classify_item_type(WARMUP_ITEM))
         print("✅ Warmup complete.\n")
 
+        yield
+
+        # --- Langfuse flush (テスト終了時に未送信イベントを送信) ---
+        try:
+            get_client().flush()
+        except Exception:
+            pass
+
     def test_benchmark(self, estimator, update_baseline):
         """全30問を実行し、ベースラインと比較して精度を検証する。"""
         loop = asyncio.get_event_loop()
@@ -85,7 +94,7 @@ class TestFoodClassificationBenchmark:
         category_stats = defaultdict(lambda: {"correct": 0, "total": 0})
 
         for item_name, expected_is_food, category in DATASET:
-            response = loop.run_until_complete(estimator._classify_item_type(item_name))
+            response = loop.run_until_complete(self._classify_with_trace(estimator, item_name))
             actual_is_food = response.get("is_food", True)
 
             correct = actual_is_food == expected_is_food
@@ -221,3 +230,8 @@ class TestFoodClassificationBenchmark:
             f"Baseline ({baseline_model}): {baseline_accuracy:.1f}%\n"
             f"Current  ({settings.LLM_MODEL}): {accuracy:.1f}%\n" + "\n".join(regression_reasons)
         )
+
+    @observe(name="benchmark-classify")
+    async def _classify_with_trace(self, estimator, item_name: str):
+        """Langfuse トレース付きで食品判定を実行。"""
+        return await estimator._classify_item_type(item_name)

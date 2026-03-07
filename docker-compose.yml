@@ -111,6 +111,9 @@ services:
     environment:
       - LLM_API_BASE=http://llm-server:8001/v1
       - LLM_MODEL=${LLM_MODEL:-gemma-2-2b-jpn-it-q2km.gguf}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
       - PYTHONPATH=/app/src
     depends_on:
       llm-server:
