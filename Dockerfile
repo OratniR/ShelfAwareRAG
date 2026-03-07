@@ -51,3 +51,10 @@ RUN uv sync --extra dashboard --no-dev
 COPY src/ ./src/
 EXPOSE 8501
 CMD ["uv", "run", "streamlit", "run", "src/shelf_aware/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+# === Benchmark (api + dev deps + tests) ===
+FROM base AS benchmark
+RUN uv sync --extra api
+COPY src/ ./src/
+COPY tests/ ./tests/
+CMD ["uv", "run", "pytest", "tests/benchmark/", "-v", "-s", "-m", "benchmark"]

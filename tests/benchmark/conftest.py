@@ -1,8 +1,10 @@
 # tests/benchmark/conftest.py
 """
 ベンチマーク用の conftest。
---update-baseline オプションで baseline.json を現在の結果で更新できる。
+--update-baseline オプション or UPDATE_BASELINE=1 環境変数で baseline.json を更新。
 """
+
+import os
 
 import pytest
 
@@ -18,4 +20,5 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def update_baseline(request):
-    return request.config.getoption("--update-baseline")
+    # CLI フラグ or 環境変数のどちらかで有効化
+    return request.config.getoption("--update-baseline") or os.environ.get("UPDATE_BASELINE") == "1"

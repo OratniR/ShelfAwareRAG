@@ -13,40 +13,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Start LLM server
-        run: docker compose up -d llm-server
+      - name: Build benchmark image
+        run: docker compose build benchmark
 
-      - name: Wait for LLM server to be healthy
-        run: |
-          echo "⏳ Waiting for LLM server to load model..."
-          timeout=300  # 最大5分待機
-          elapsed=0
-          until curl -sf http://localhost:8001/v1/models > /dev/null 2>&1; do
-            if [ $elapsed -ge $timeout ]; then
-              echo "❌ LLM server did not become healthy in ${timeout}s"
-              docker compose logs llm-server --tail=30
-              exit 1
-            fi
-            sleep 10
-            elapsed=$((elapsed + 10))
-            echo "  ... ${elapsed}s elapsed"
-          done
-          echo "✅ LLM server is ready"
+      - name: Run benchmark (with llm-server auto-start via depends_on)
+        run: docker compose run --rm benchmark
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install dependencies
-        run: uv sync --extra api --dev
-
-      - name: Run food classification benchmark
-        env:
-          LLM_API_BASE: http://localhost:8001/v1
-        run: uv run pytest tests/benchmark/ -v -s -m benchmark
-
-      - name: Stop LLM server
+      - name: Cleanup
         if: always()
-        run: docker compose down llm-server
+        run: docker compose --profile benchmark down

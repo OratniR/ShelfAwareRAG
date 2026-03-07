@@ -96,3 +96,24 @@ services:
       - rag-api
     restart: unless-stopped
 
+  # Service 4: Benchmark Runner (手動実行用)
+  # 使い方:
+  #   docker compose run --rm benchmark                        # 通常実行
+  #   docker compose run --rm -e UPDATE_BASELINE=1 benchmark   # ベースライン更新
+  benchmark:
+    build:
+      context: .
+      target: benchmark
+    container_name: benchmark
+    volumes:
+      - ./tests/benchmark:/app/tests/benchmark  # baseline.json の永続化
+      - ./src:/app/src
+    environment:
+      - LLM_API_BASE=http://llm-server:8001/v1
+      - LLM_MODEL=${LLM_MODEL:-gemma-2-2b-jpn-it-q2km.gguf}
+      - PYTHONPATH=/app/src
+    depends_on:
+      llm-server:
+        condition: service_healthy
+    profiles:
+      - benchmark  # docker compose up では起動しない
