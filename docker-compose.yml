@@ -23,7 +23,8 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
       - PYTHONPATH=/app/src
     depends_on:
-      - llm-server  # Wait for the LLM to start first
+      llm-server:
+        condition: service_healthy  # モデルロード完了を待つ
     restart: unless-stopped
 
   # Service 2: The LLM Server
@@ -66,6 +67,12 @@ services:
       # Mount our local model file into the container
     - ./data/models:/models:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     ulimits:
       memlock:
         soft: -1
