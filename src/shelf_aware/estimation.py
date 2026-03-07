@@ -11,6 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import httpx
+from langfuse import observe
 
 from shelf_aware.config import settings
 from shelf_aware.constants import EXCLUDED_DOMAINS
@@ -51,6 +52,7 @@ class ExpirationEstimator:
         self._lock = asyncio.Lock()
         self.MONTHLY_LIMIT = 2000
 
+    @observe()
     async def estimate_expiration(self, item_name: str, dao: "InventoryDAO") -> Dict[str, Any]:
         # 1. 名前クリーニング ("オリーブオイルのストック" -> "オリーブオイル")
         clean_name = self._clean_item_name(item_name)
@@ -109,6 +111,7 @@ class ExpirationEstimator:
         cleaned = re.sub(r"(\s|の)?(ストック|在庫)$", "", name)
         return cleaned.strip()
 
+    @observe(as_type="generation")
     async def _classify_item_type(self, item_name: str) -> Dict[str, Any]:
         """[Phase 1] 食品判定 (タイムアウトを60秒に延長)"""
         prompt = FOOD_CLASSIFICATION_PROMPT.format(item_name=item_name)
@@ -139,6 +142,7 @@ class ExpirationEstimator:
                 logger.warning(f"Classification Warning (Defaulting to Food): {e}")
                 return {"is_food": True}
 
+    @observe()
     async def _search_brave(self, query: str, dao: "InventoryDAO") -> str:
         """[Private] Brave Search APIを叩き、Contextとなるテキストを生成する"""
         if not self.brave_api_key:
@@ -188,6 +192,7 @@ class ExpirationEstimator:
                 logger.error(f"Brave Search Error: {e}")
                 return ""
 
+    @observe(as_type="generation")
     async def _call_llm(self, item_name: str, context: str) -> Dict[str, Any]:
         """[Private] LLMにContextを渡し、JSON形式で日数リスト等を抽出させる"""
         logger.info(f"context:\n{context}")

@@ -2,7 +2,8 @@ import json
 import logging
 
 from fastapi import BackgroundTasks
-from openai import OpenAI
+from langfuse import observe
+from langfuse.openai import OpenAI
 
 from shelf_aware.estimation import EstimationResult  # Enumをインポート
 
@@ -43,6 +44,7 @@ llm_client = OpenAI(
 # 依存関係(dao, estimator)を持つため、今回はサービスクラス内のメソッドとして呼び出す形をとる
 
 
+@observe()
 async def run_estimation_task(item_name: str, estimator: ExpirationEstimator, dao: InventoryDAO):
     """賞味期限推定を実行し、結果に応じてDBを更新する"""
     logger.info(f"⏳ Estimating expiration for: {item_name}")
@@ -78,6 +80,7 @@ class RAGService:
         self.estimator = ExpirationEstimator()
         logger.info("RAGService initialized with DAO and Estimator.")
 
+    @observe()
     def classify_intent(self, text: str) -> dict:
         """Uses the LLM to classify the user's intent."""
         logger.debug(f"Classifying intent for: '{text}'")
@@ -103,6 +106,7 @@ class RAGService:
             logger.error(f"Intent classification failed: {e}", exc_info=True)
             return {"intent": "unknown", "item_name": "unknown"}
 
+    @observe()
     def add(self, item_name: str, location: str, background_tasks: BackgroundTasks):
         """Adds item to SQLite & Chroma (via DAO), then triggers Estimation & Notion sync."""
         logger.info(f"Adding/updating item: '{item_name}' at '{location}'")
@@ -120,6 +124,7 @@ class RAGService:
         #    依存オブジェクト(estimator, dao)を渡して実行
         background_tasks.add_task(run_estimation_task, item_name, self.estimator, self.dao)
 
+    @observe()
     def delete(self, item_name: str, background_tasks: BackgroundTasks):
         """Deletes item from SQLite (sync) & Chroma (async via BackgroundTasks), then syncs Notion."""
         logger.info(f"Deleting item: '{item_name}'")
@@ -142,6 +147,7 @@ class RAGService:
             except Exception as e:
                 logger.error(f"Error scheduling Notion addition: {e}")
 
+    @observe()
     def ask(self, item_name: str) -> str:
         """Asks where an item is using ChromaDB (accessed via DAO)."""
         logger.debug(f"Querying for: '{item_name}'")

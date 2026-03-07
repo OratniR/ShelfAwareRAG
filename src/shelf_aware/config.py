@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     NOTION_DATASOURCE_ID: str = Field(default="")
     NOTION_ITEM_PROPERTY_NAME: str = "Name"  # Name of the property holding the item name
     NOTION_CHECKBOX_PROPERTY_NAME: str = "購入済み"  # Name of the checkbox property
+    # Langfuse settings (cloud.langfuse.comに接続、.envでキーを設定)
+    LANGFUSE_SECRET_KEY: str = Field(default="")
+    LANGFUSE_PUBLIC_KEY: str = Field(default="")
+    LANGFUSE_HOST: str = Field(default="https://cloud.langfuse.com")
 
     class Config:
         env_file = ".env"  # This tells it to load from a .env file

@@ -2,6 +2,7 @@ import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI
+from langfuse import get_client, observe
 from pydantic import BaseModel
 
 from .logging_config import LOGGING_CONFIG
@@ -30,6 +31,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("RAG Service loaded. Application is ready.")
     yield
+    # Langfuse: 未送信のイベントをflush
+    try:
+        get_client().flush()
+    except Exception:
+        pass
     logger.info("--- Application Shutting Down ---")
 
 
@@ -51,6 +57,7 @@ class DispatchRequest(BaseModel):
 
 
 @app.post("/dispatch")
+@observe()
 async def handle_dispatch(request: DispatchRequest, background_tasks: BackgroundTasks):
     """
     Siriからのエントリポイント。
