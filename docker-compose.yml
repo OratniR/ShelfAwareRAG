@@ -56,9 +56,7 @@ services:
       - "--flash_attn"  # Flash Attention
       - "true"
       - "--cache"
-      - "true"
-      - "--cache_size"
-      - "2"
+      - "false"
       - "--host"
       - "0.0.0.0"
       - "--port"
