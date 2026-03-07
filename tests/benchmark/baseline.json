@@ -1,0 +1,11 @@
+{
+  "model": "gemma-2-2b-jpn-it-q2km.gguf",
+  "accuracy": 0.0,
+  "category_scores": {
+    "明らかな食品": 0.0,
+    "紛らわしい食品": 0.0,
+    "明らかな非食品": 0.0,
+    "紛らわしい非食品": 0.0
+  },
+  "note": "Initial baseline — will be updated after first benchmark run"
+}

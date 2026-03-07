@@ -59,6 +59,7 @@ pythonpath = ["src"]
 markers = [
     "integration: marks tests as integration tests (slow, requires env)",
     "e2e: marks tests as end-to-end tests (requires running server)",
+    "benchmark: marks tests as model benchmark tests (requires LLM server)",
 ]
 
 [tool.ruff]
