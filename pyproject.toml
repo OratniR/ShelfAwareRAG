@@ -25,7 +25,7 @@ api = [
     "uvicorn>=0.38.0",
 ]
 llm = [
-    "llama-cpp-python[server]>=0.3.16",
+
 ]
 dashboard = [
     "chromadb>=1.2.0",
