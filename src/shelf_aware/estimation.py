@@ -119,8 +119,8 @@ class ExpirationEstimator:
         payload = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
-            "max_tokens": 256,
-            "response_format": {"type": "json_object"},
+            "max_tokens": 20,
+            # "response_format": {"type": "json_object"},
             "model": settings.LLM_MODEL,
         }
 
@@ -133,10 +133,13 @@ class ExpirationEstimator:
             try:
                 # Raspberry Pi用にタイムアウトを大幅延長 (10s -> 60s)
                 resp = await client.post(self.llm_api_url, json=payload, headers=headers, timeout=120.0)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                content = content.replace("```json", "").replace("```", "").strip()
-                return json.loads(content)
+                print(f"HTTP_STATUS: {resp.status_code}", flush=True)
+                content = resp.json()["choices"][0]["message"]["content"].strip().lower()
+                print(f"RAW: {repr(content)}", flush=True)
+
+                is_food = "non-food" not in content
+                return {"is_food": is_food}
+
             except Exception as e:
                 # エラー詳細をログに出す
                 logger.warning(f"Classification Warning (Defaulting to Food): {e}")
@@ -203,8 +206,8 @@ class ExpirationEstimator:
         payload = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
-            "max_tokens": 512,
-            "response_format": {"type": "json_object"},
+            "max_tokens": 30,
+            # "response_format": {"type": "json_object"},
             "model": settings.LLM_MODEL,
         }
 
@@ -215,13 +218,16 @@ class ExpirationEstimator:
 
         async with httpx.AsyncClient() as client:
             try:
-                # 抽出は時間がかかるので120秒待つ
                 resp = await client.post(self.llm_api_url, json=payload, headers=headers, timeout=120.0)
                 resp.raise_for_status()
-                result = resp.json()
-                content = result["choices"][0]["message"]["content"]
+                content = resp.json()["choices"][0]["message"]["content"]
                 content = content.replace("```json", "").replace("```", "").strip()
-                return json.loads(content)
+                if re.search(r"false", content, re.IGNORECASE):
+                    return {"is_food": False}
+                elif re.search(r"true", content, re.IGNORECASE):
+                    return {"is_food": True}
+                else:
+                    return json.loads(content)
             except Exception as e:
                 logger.error(f"LLM Extraction Error: {e}")
                 return {"is_food": False}

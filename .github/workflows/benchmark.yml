@@ -1,0 +1,24 @@
+name: Model Benchmark
+
+on:
+  push:
+    branches: [compare-models]
+
+jobs:
+  food-classification:
+    name: Food Classification Benchmark
+    runs-on: self-hosted  # Raspberry Pi 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build benchmark image
+        run: docker compose build benchmark
+
+      - name: Run benchmark (with llm-server auto-start via depends_on)
+        run: docker compose run --rm benchmark
+
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile benchmark down

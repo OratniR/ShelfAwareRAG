@@ -22,48 +22,47 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
       - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
     depends_on:
       llm-server:
         condition: service_healthy  # モデルロード完了を待つ
     restart: unless-stopped
 
-  # Service 2: The LLM Server
   llm-server:
     build:
       context: .
       target: llm
     container_name: llm-server
+    # C++版 llama-server の引数に変更
     command:
-      - "uv"
-      - "run"
-      - "python"
-      - "-m"
-      - "llama_cpp.server"
-      - "--model"
-      - "/models/${MODEL_FILENAME}"
-      - "--n_gpu_layers"
-      - "0"
-      - "--n_threads"
-      - "4"
-      - "--n_batch"
-      - "256"
-      - "--n_ctx"
-      - "2048"
-      - "--type_k"      # KV Cache量子化（Key）
-      - "2"
-      - "--type_v"      # KV Cache量子化（Value）
-      - "2"
-      - "--flash_attn"  # Flash Attention
-      - "true"
-      - "--cache"
-      - "false"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8001"
+          - "llama-server"  
+          - "--host"
+          - "0.0.0.0"
+          - "--port"
+          - "8001"
+          - "--model"
+          - "/models/${MODEL_FILENAME}"
+          - "--ctx-size"
+          - "2048"
+          - "--n-gpu-layers"
+          - "0"
+          - "--threads"
+          - "4"
+          - "--parallel"
+          - "2"    
+          - "--flash-attn"
+          - "on"
+          - "--cache-type-k" 
+          - "q4_0"
+          - "--cache-type-v"
+          - "q4_0"
+          # - "--chat-template" #JSONが来ない時にparsing errorが出ない様の対策だが、promptでJSONを強制していないので削除
+          # - "chatml"
+          - "--chat-template-kwargs"
+          - "{\"enable_thinking\":false}" 
     volumes:
       # Mount our local model file into the container
-    - ./data/models:/models:ro
+      - ./data/models:/models:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/v1/models"]
@@ -96,3 +95,27 @@ services:
       - rag-api
     restart: unless-stopped
 
+  # Service 4: Benchmark Runner (手動実行用)
+  # 使い方:
+  #   docker compose run --rm benchmark                        # 通常実行
+  #   docker compose run --rm -e UPDATE_BASELINE=1 benchmark   # ベースライン更新
+  benchmark:
+    build:
+      context: .
+      target: benchmark
+    container_name: benchmark
+    volumes:
+      - ./tests/benchmark:/app/tests/benchmark  # baseline.json の永続化
+      - ./src:/app/src
+    environment:
+      - LLM_API_BASE=http://llm-server:8001/v1
+      - LLM_MODEL=${LLM_MODEL:-gemma-2-2b-jpn-it-q2km.gguf}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - PYTHONPATH=/app/src
+    depends_on:
+      llm-server:
+        condition: service_healthy
+    profiles:
+      - benchmark  # docker compose up では起動しない

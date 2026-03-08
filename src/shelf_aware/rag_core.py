@@ -93,6 +93,7 @@ class RAGService:
                 response_format={"type": "json_object"},
                 messages=[{"role": "user", "content": combined_prompt}],
                 temperature=0.1,
+                max_tokens=30,
             )
             raw_response_text = response.choices[0].message.content
             logger.debug(f"Raw LLM response (for intent): {raw_response_text}")

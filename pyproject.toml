@@ -25,7 +25,7 @@ api = [
     "uvicorn>=0.38.0",
 ]
 llm = [
-    "llama-cpp-python[server]>=0.3.16",
+
 ]
 dashboard = [
     "chromadb>=1.2.0",
@@ -59,6 +59,7 @@ pythonpath = ["src"]
 markers = [
     "integration: marks tests as integration tests (slow, requires env)",
     "e2e: marks tests as end-to-end tests (requires running server)",
+    "benchmark: marks tests as model benchmark tests (requires LLM server)",
 ]
 
 [tool.ruff]
