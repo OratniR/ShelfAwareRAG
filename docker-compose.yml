@@ -49,7 +49,7 @@ services:
           - "--threads"
           - "4"
           - "--parallel"
-          - "1"    
+          - "2"    
           - "--flash-attn"
           - "on"
           - "--cache-type-k" 

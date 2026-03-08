@@ -222,9 +222,9 @@ class ExpirationEstimator:
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
                 content = content.replace("```json", "").replace("```", "").strip()
-                if re.search(r'false', content, re.IGNORECASE):
+                if re.search(r"false", content, re.IGNORECASE):
                     return {"is_food": False}
-                elif re.search(r'true', content, re.IGNORECASE):
+                elif re.search(r"true", content, re.IGNORECASE):
                     return {"is_food": True}
                 else:
                     return json.loads(content)
