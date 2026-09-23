@@ -163,6 +163,21 @@ docker compose up -d --force-recreate
 `is_estimated=3` は `last_error` に理由、`attempt_count` に試行回数が記録され、ダッシュボードに表示される。
 「未処理のまま何も起きない」状態を作らないためのステータス。
 
+### 更新の反映方法（`git pull` の後に何をするか）
+
+`src/` と `scripts/` はコンテナへ bind mount されているため、**コード変更だけなら再ビルドは不要**。
+ただし uvicorn / Streamlit は起動時にモジュールを読み込むので、プロセスの再起動は必要。
+
+| 変更されたファイル | 必要なコマンド |
+| --- | --- |
+| `src/**`, `scripts/**` のみ | `docker compose restart rag-api`（`dashboard.py` も変えたなら `docker compose restart dashboard` も） |
+| `Dockerfile` / `pyproject.toml` / `uv.lock` | `docker compose build` → `docker compose up -d` |
+| `docker-compose.yml`（環境変数・command） | `docker compose up -d`（コンテナ再作成で反映） |
+
+注意: `docker compose up -d` は**設定が変わっていないコンテナを再作成しない**ため、
+コードだけを更新したときの `up -d` では新しいコードは読み込まれない（`restart` を使う）。
+どのファイルが変わったかは `git diff --stat HEAD@{1} HEAD` で確認できる。
+
 ### 期間の単位はLLMに換算させない
 
 LLMには検索結果の表記を**そのまま**（`"2年"`, `"半年"`, `"1ヶ月"`）出力させ、日数への換算は

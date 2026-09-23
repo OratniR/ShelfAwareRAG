@@ -3,8 +3,12 @@
 実DB(SQLite) + 実Estimator の統合テスト。
 
 LLMサーバーと BRAVE_API_KEY が必要。無い環境では自動でスキップされる。
-Raspberry Pi 上での実行例:
-    docker compose exec rag-api uv run pytest tests/integration/test_estimation_flow.py -v -s -m integration
+
+rag-api コンテナには pytest と tests/ が入っていない（api ステージは `--no-dev` かつ
+`COPY src/` のみ）ため、benchmark ステージで実行する:
+
+    docker compose run --rm -v "$PWD/tests:/app/tests" benchmark \\
+        uv run pytest tests/integration/test_estimation_flow.py -v -s -m integration
 """
 
 import pytest
