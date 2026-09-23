@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 
+from shelf_aware.constants import STATUS_FAILED, STATUS_LABELS
 from shelf_aware.database import InventoryDAO
 
 # --- 設定 ---
@@ -82,6 +83,16 @@ else:
 
     st.divider()
 
+    # --- 1.5 推定失敗の通知（未処理のまま放置されているアイテムを可視化） ---
+    failed_items = df[df["is_estimated"] == STATUS_FAILED]
+    if not failed_items.empty:
+        names = "、".join(failed_items["id"].head(5).tolist())
+        st.warning(
+            f"⚠️ 賞味期限の推定に失敗したアイテムが {len(failed_items)} 件あります: {names}\n\n"
+            "毎日 3:00 に自動で再試行されます（上限回数まで）。"
+            "ダッシュボードでステータスを「🕒 未処理」に戻すと再試行対象になります。"
+        )
+
     # --- 2. 検索 & 編集リスト ---
     col_header, col_search = st.columns([2, 1])
     with col_header:
@@ -93,7 +104,16 @@ else:
         df = df[df.apply(lambda row: search_q.lower() in row.astype(str).str.lower().values, axis=1)]
 
     # 表示・編集するカラムの定義（updated_at を追加）
-    display_cols = ["削除", "id", "location", "expiry_date", "is_estimated", "updated_at"]
+    display_cols = [
+        "削除",
+        "id",
+        "location",
+        "expiry_date",
+        "is_estimated",
+        "attempt_count",
+        "last_error",
+        "updated_at",
+    ]
 
     # --- エディタ本体 ---
     edited_df = st.data_editor(
@@ -106,10 +126,13 @@ else:
             "is_estimated": st.column_config.SelectboxColumn(
                 "ステータス",
                 width="medium",
-                options=[0, 1, 2],
-                format_func=lambda x: {0: "🕒 未処理", 1: "✅ 推定済", 2: "🚫 対象外"}.get(x, str(x)),
+                options=sorted(STATUS_LABELS.keys()),
+                format_func=lambda x: STATUS_LABELS.get(x, str(x)),
                 required=True,
             ),
+            # 失敗の原因をダッシュボードで確認できるようにする（読み取り専用）
+            "attempt_count": st.column_config.NumberColumn("試行回数", width="small", disabled=True),
+            "last_error": st.column_config.TextColumn("失敗理由", width="medium", disabled=True),
             # 【追加】登録日（更新日）の設定
             "updated_at": st.column_config.DatetimeColumn(
                 "登録日",

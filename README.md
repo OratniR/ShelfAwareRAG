@@ -148,3 +148,48 @@ git pull
 docker compose build (Only if code or dependencies changed)
 
 docker compose up -d --force-recreate
+
+## 8\. 賞味期限推定パイプラインの運用メモ
+
+### ステータス (`items.is_estimated`)
+
+| 値 | 表示 | 意味 |
+| --- | --- | --- |
+| 0 | 🕒 未処理 | まだ推定していない |
+| 1 | ✅ 推定済 | 賞味期限を推定できた |
+| 2 | 🚫 対象外 | 食品ではないと判定された |
+| 3 | ⚠️ 失敗 | **推定を実行したが失敗した**（検索ヒットなし / LLMが日数を返さない / 通信エラー等） |
+
+`is_estimated=3` は `last_error` に理由、`attempt_count` に試行回数が記録され、ダッシュボードに表示される。
+「未処理のまま何も起きない」状態を作らないためのステータス。
+
+### 日次バックフィル
+
+未処理(0)と失敗(3)のアイテムを毎日 **3:00 JST** に最大5件まで再推定する（`rag-api` コンテナ内で動作）。
+失敗は `MAX_ESTIMATION_ATTEMPTS`(既定3回) で打ち切るため、無限にAPIを消費しない。
+ダッシュボードでステータスを「🕒 未処理」に戻すと試行回数がリセットされ、再び対象になる。
+
+### 主な環境変数 (`.env` / `docker-compose.yml`)
+
+| 変数 | 既定 | 用途 |
+| --- | --- | --- |
+| `LLM_JSON_MODE` | `auto` | LLMにJSON出力を強制する。`off` で無効化（Piで生成が遅い場合など） |
+| `BACKFILL_HOUR` | `3` | バックフィル実行時刻(JST) |
+| `MAX_ESTIMATION_ATTEMPTS` | `3` | 失敗アイテムの再試行上限 |
+| `LLM_CTX_SIZE` | `8192` | llama-server のコンテキスト長（`--parallel` で分割される） |
+| `LLM_PARALLEL` | `2` | llama-server の並列スロット数 |
+| `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン（賞味期限の計算にも影響） |
+
+### 失敗時の調査
+
+```bash
+# LLMの生出力とfinish_reason（JSONが壊れていないか）
+docker compose logs rag-api | grep -E "LLM_RAW|LLM出力が利用不可|Estimation FAILED"
+
+# どのアイテムが失敗しているか
+sqlite3 data/inventory.db "SELECT id,is_estimated,attempt_count,last_error FROM items WHERE is_estimated=3;"
+
+# 手動で再推定したい場合
+docker compose exec rag-api uv run python scripts/manual_backfill.py
+```
+

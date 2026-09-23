@@ -9,8 +9,9 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 
 
+from shelf_aware.config import settings
 from shelf_aware.database import InventoryDAO
-from shelf_aware.estimation import EstimationResult, ExpirationEstimator
+from shelf_aware.estimation import EstimationResult, ExpirationEstimator, apply_estimation_outcome
 from shelf_aware.logging_config import LOGGING_CONFIG
 
 # Load Logging Config
@@ -26,8 +27,8 @@ async def main():
     dao = InventoryDAO()
     estimator = ExpirationEstimator()
 
-    # 1. 処理対象を取得
-    targets = dao.get_items_for_backfill(limit=TARGET_COUNT)
+    # 1. 処理対象を取得 (未処理 と 失敗 のうち、試行回数が上限未満のもの)
+    targets = dao.get_items_for_backfill(limit=TARGET_COUNT, max_attempts=settings.MAX_ESTIMATION_ATTEMPTS)
 
     if not targets:
         logger.info("✅ No items need backfilling. (All caught up!)")
@@ -39,6 +40,7 @@ async def main():
     success_count = 0
     skipped_count = 0
     non_food_count = 0
+    error_count = 0
 
     for i, item in enumerate(targets, 1):
         item_name = item["id"]
@@ -46,27 +48,26 @@ async def main():
 
         try:
             # 推定実行 (DAOを渡す)
-            result_packet = await estimator.estimate_expiration(item_name, dao)
+            outcome = await estimator.estimate_expiration(item_name, dao)
 
-            status = result_packet["status"]
-            data = result_packet["data"]
+            # 結果の反映 (dispatch経路と共通の処理)
+            status = apply_estimation_outcome(dao, item_name, outcome)
 
-            if status == EstimationResult.SUCCESS and data:
-                dao.update_expiry(item_name, data["expiry_date"])
-                logger.info(f"  ✅ Updated: {data['expiry_date']} ({data['reason']})")
+            if status == EstimationResult.SUCCESS:
+                logger.info(f"  ✅ Updated: {outcome.data['expiry_date']} ({outcome.data['reason']})")
                 success_count += 1
 
             elif status == EstimationResult.NON_FOOD:
-                dao.mark_as_non_food(item_name)
                 logger.info("  🚫 Marked as Non-Food")
                 non_food_count += 1
 
             elif status == EstimationResult.SKIPPED:
-                logger.warning("  ⏭️ Skipped (Rate Limit or No Data)")
+                logger.warning(f"  ⏭️ Skipped (Rate Limit or No Data): {outcome.reason}")
                 skipped_count += 1
 
             else:
-                logger.error(f"  ❓ Unknown Status: {status}")
+                logger.error(f"  ⚠️ Failed: {outcome.reason}")
+                error_count += 1
 
             # APIレート制限（Braveは1秒1回）への配慮 + 少し余裕を持つ
             logger.info("  💤 Cooling down for 10 seconds...")
@@ -81,6 +82,7 @@ async def main():
     logger.info(f"   Success  : {success_count}")
     logger.info(f"   Non-Food : {non_food_count}")
     logger.info(f"   Skipped  : {skipped_count}")
+    logger.info(f"   Failed   : {error_count}")
     logger.info("-" * 40)
 
 

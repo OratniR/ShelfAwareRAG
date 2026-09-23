@@ -15,6 +15,13 @@ services:
     # This is the magic: it tells our API to use the LLM service
     environment:
       - LLM_API_BASE=http://llm-server:8001/v1
+      # llama-serverが実際にロードしているモデル名と揃える（リクエストのmodel指定のズレ防止）
+      - LLM_MODEL=${MODEL_FILENAME:-gemma-2-2b-jpn-it-q2km.gguf}
+      # LLMにJSON出力を強制する: auto(対応していれば使う) / off
+      - LLM_JSON_MODE=${LLM_JSON_MODE:-auto}
+      # 日次バックフィルの実行時刻(JST)。賞味期限の計算もJSTになる
+      - TZ=${TZ:-Asia/Tokyo}
+      - BACKFILL_HOUR=${BACKFILL_HOUR:-3}
       - NOTION_API_KEY=${NOTION_API_KEY}           # Reads from .env or host env
       - NOTION_DATASOURCE_ID=${NOTION_DATASOURCE_ID}
       - BRAVE_API_KEY=${BRAVE_API_KEY}
@@ -42,14 +49,16 @@ services:
           - "8001"
           - "--model"
           - "/models/${MODEL_FILENAME}"
+          # --parallel で分割されるため、1スロットあたり ctx-size/parallel になる。
+          # 賞味期限推定のプロンプト(約1000文字)+出力400トークンが収まるよう拡大している。
           - "--ctx-size"
-          - "2048"
+          - "${LLM_CTX_SIZE:-8192}"
           - "--n-gpu-layers"
           - "0"
           - "--threads"
           - "4"
           - "--parallel"
-          - "2"    
+          - "${LLM_PARALLEL:-2}"    
           - "--flash-attn"
           - "on"
           - "--cache-type-k" 
@@ -90,6 +99,7 @@ services:
       - ./src:/app/src
     environment:
       - PYTHONPATH=/app/src
+      - TZ=${TZ:-Asia/Tokyo}
     command: ["uv", "run", "streamlit", "run", "src/shelf_aware/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
     depends_on:
       - rag-api

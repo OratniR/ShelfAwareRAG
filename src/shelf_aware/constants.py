@@ -25,3 +25,21 @@ EXCLUDED_DOMAINS = [
     "detail.chiebukuro.yahoo.co.jp",
     "komachi.yomiuri.co.jp",
 ]
+
+# --- 賞味期限推定ステータス (items.is_estimated) ---
+# 0: 未処理 / 1: 推定済 / 2: 対象外(食品ではない) / 3: 失敗(要再試行)
+STATUS_UNPROCESSED = 0
+STATUS_ESTIMATED = 1
+STATUS_NON_FOOD = 2
+STATUS_FAILED = 3
+
+# ダッシュボード表示用ラベル (dashboard.py と scheduler.py で共用)
+STATUS_LABELS = {
+    STATUS_UNPROCESSED: "🕒 未処理",
+    STATUS_ESTIMATED: "✅ 推定済",
+    STATUS_NON_FOOD: "🚫 対象外",
+    STATUS_FAILED: "⚠️ 失敗",
+}
+
+# 再推定の対象外とするステータス（推定が確定したもの）
+STATUS_FINALIZED = (STATUS_ESTIMATED, STATUS_NON_FOOD)

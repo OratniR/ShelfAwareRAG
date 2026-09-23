@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .logging_config import LOGGING_CONFIG
 from .rag_core import RAGService
+from .scheduler import BackfillScheduler
 
 # Load Logging Config
 logging.config.dictConfig(LOGGING_CONFIG)
@@ -22,15 +23,31 @@ async def lifespan(app: FastAPI):
 
     # RAGService内でDAO, Estimator, NotionShoppingListClientが初期化される
     app_state["rag_service"] = RAGService()
+    service: RAGService = app_state["rag_service"]
 
     # 前回起動時に失敗したChromaDB削除をリトライ
-    service: RAGService = app_state["rag_service"]
     retried = service.dao.process_pending_deletions()
     if retried > 0:
         logger.info(f"Retried {retried} pending ChromaDB deletions on startup")
 
+    # 日次バックフィル（未処理・失敗アイテムの再推定）を起動する。
+    # DAO/EstimatorはRAGServiceと共有する（Pi 5でSentenceTransformerを二重ロードしないため）。
+    try:
+        backfill = BackfillScheduler(service.dao, service.estimator)
+        backfill.start()
+        app_state["backfill_scheduler"] = backfill
+    except Exception as e:
+        # バックフィルが起動しなくてもAPI自体は動かす
+        logger.error(f"Failed to start Backfill Scheduler: {e}", exc_info=True)
+
     logger.info("RAG Service loaded. Application is ready.")
     yield
+
+    # スケジューラー停止
+    backfill = app_state.get("backfill_scheduler")
+    if backfill is not None:
+        backfill.shutdown()
+
     # Langfuse: 未送信のイベントをflush
     try:
         get_client().flush()

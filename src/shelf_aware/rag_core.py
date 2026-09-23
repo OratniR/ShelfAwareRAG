@@ -2,15 +2,20 @@ import json
 import logging
 
 from fastapi import BackgroundTasks
-from langfuse import observe
+from langfuse import get_client, observe
 from langfuse.openai import OpenAI
 
-from shelf_aware.estimation import EstimationResult  # Enumをインポート
+from shelf_aware.estimation import (  # Enumをインポート
+    EstimationResult,
+    apply_estimation_outcome,
+    update_langfuse,
+)
 
 from . import constants, prompts
 
 # 設定と定数
 from .config import settings
+from .constants import STATUS_FINALIZED
 from .database import InventoryDAO  # <--- 追加: DB操作の委譲先
 from .estimation import ExpirationEstimator  # <--- 追加: 賞味期限推定
 
@@ -33,6 +38,14 @@ def extract_json_block(text: str) -> str | None:
     return text[start_index : end_index + 1]
 
 
+def current_trace_id() -> str | None:
+    """現在のLangfuseトレースIDを返す（取得できなければNone）。"""
+    try:
+        return get_client().get_current_trace_id()
+    except Exception:
+        return None
+
+
 # --- LLM Client Setup ---
 # Intent分類用 (EmbeddingモデルはInventoryDAO内で管理されるためここでは不要)
 llm_client = OpenAI(
@@ -44,32 +57,43 @@ llm_client = OpenAI(
 # 依存関係(dao, estimator)を持つため、今回はサービスクラス内のメソッドとして呼び出す形をとる
 
 
-@observe()
-async def run_estimation_task(item_name: str, estimator: ExpirationEstimator, dao: InventoryDAO):
-    """賞味期限推定を実行し、結果に応じてDBを更新する"""
+@observe(name="run_estimation_task", capture_input=False, capture_output=False)
+async def run_estimation_task(
+    item_name: str,
+    estimator: ExpirationEstimator,
+    dao: InventoryDAO,
+    dispatch_trace_id: str | None = None,
+):
+    """
+    賞味期限推定を実行し、結果に応じてDBを更新する。
+
+    - 失敗は is_estimated=3 として記録される（未処理のまま放置しない）。
+    - estimator/dao はLangfuseに記録しない（BraveのAPIキーとDB接続がトレースに載るため）。
+    """
     logger.info(f"⏳ Estimating expiration for: {item_name}")
+    update_langfuse("span", input={"item_name": item_name, "dispatch_trace_id": dispatch_trace_id})
+
     try:
+        # 既に推定が確定しているアイテムは再推定しない（Piの限られたAPIクォータの節約）
+        current = dao.get_item(item_name)
+        if current and current.get("is_estimated") in STATUS_FINALIZED:
+            logger.info(f"⏭️ Already finalized (status={current['is_estimated']}): {item_name}")
+            update_langfuse("span", output={"status": "already_finalized", "is_estimated": current["is_estimated"]})
+            return
+
         # 結果セットを取得
-        result_packet = await estimator.estimate_expiration(item_name, dao)
-        status = result_packet["status"]
-        data = result_packet["data"]
+        outcome = await estimator.estimate_expiration(item_name, dao)
 
-        if status == EstimationResult.SUCCESS and data:
-            # 成功: 日付を更新 (is_estimated -> 1)
-            dao.update_expiry(item_name, data["expiry_date"])
-            logger.info(f"✅ Expiry Updated: {item_name} -> {data['expiry_date']} (約{data['days_offset']}日)")
+        # 結果をDBへ反映（dispatch / バックフィル / 手動スクリプトで共通の処理）
+        apply_estimation_outcome(dao, item_name, outcome)
 
-        elif status == EstimationResult.NON_FOOD:
-            # 食品ではない: 対象外マーク (is_estimated -> 2)
-            dao.mark_as_non_food(item_name)
-            logger.info(f"🚫 Marked as Non-Food: {item_name}")
-
-        else:
-            # スキップ/エラー: ログだけ出して何もしない（次回リトライ対象のまま）
-            logger.info(f"⏭️ Skipped expiration update for: {item_name} (Status: {status})")
+        update_langfuse("span", output=outcome.as_dict())
+        if outcome.status == EstimationResult.ERROR:
+            update_langfuse("span", level="ERROR", status_message=(outcome.reason or "estimation_error")[:300])
 
     except Exception as e:
-        logger.error(f"❌ Estimation task failed for {item_name}: {e}")
+        logger.error(f"❌ Estimation task failed for {item_name}: {e}", exc_info=True)
+        update_langfuse("span", level="ERROR", status_message=str(e)[:300])
 
 
 class RAGService:
@@ -123,7 +147,8 @@ class RAGService:
 
         # 3. 賞味期限推定 (非同期) - 新機能
         #    依存オブジェクト(estimator, dao)を渡して実行
-        background_tasks.add_task(run_estimation_task, item_name, self.estimator, self.dao)
+        #    BackgroundTaskは別トレースになるため、元の /dispatch のトレースIDを渡して追跡可能にする
+        background_tasks.add_task(run_estimation_task, item_name, self.estimator, self.dao, current_trace_id())
 
     @observe()
     def delete(self, item_name: str, background_tasks: BackgroundTasks):

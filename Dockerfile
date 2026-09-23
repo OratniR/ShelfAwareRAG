@@ -8,8 +8,10 @@ FROM python:3.13-slim AS base
 WORKDIR /app
 
 # 最小限のシステム依存 (curl は uv のインストールに必要)
-RUN apt-get update && apt-get install -y \
+# tzdata: 日次バックフィルをJST 3:00に実行し、賞味期限もJSTで計算するため (ZoneInfo("Asia/Tokyo"))
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
+    tzdata \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

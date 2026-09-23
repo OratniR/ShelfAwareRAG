@@ -9,7 +9,15 @@ from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from sentence_transformers import SentenceTransformer
 
 from shelf_aware.config import settings
-from shelf_aware.constants import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR, SQLITE_DB_PATH
+from shelf_aware.constants import (
+    CHROMA_COLLECTION_NAME,
+    CHROMA_DB_DIR,
+    SQLITE_DB_PATH,
+    STATUS_ESTIMATED,
+    STATUS_FAILED,
+    STATUS_NON_FOOD,
+    STATUS_UNPROCESSED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +71,10 @@ class InventoryDAO:
                     location TEXT NOT NULL,
                     updated_at TIMESTAMP NOT NULL,
                     expiry_date TEXT,               -- 推定された賞味期限 (YYYY-MM-DD)
-                    is_estimated INTEGER DEFAULT 0  -- 1: AI推定, 0: 手動
+                    is_estimated INTEGER DEFAULT 0, -- 0:未処理 1:推定済 2:対象外 3:失敗
+                    attempt_count INTEGER DEFAULT 0,-- 推定を試行した回数（失敗の再試行上限に使う）
+                    last_error TEXT,                -- 直近の失敗理由
+                    last_attempted_at TIMESTAMP     -- 直近の推定試行時刻
                 )
             """)
             self.conn.execute("""
@@ -95,33 +106,54 @@ class InventoryDAO:
                 self.conn.execute("ALTER TABLE items ADD COLUMN expiry_date TEXT")
             if "is_estimated" not in columns:
                 self.conn.execute("ALTER TABLE items ADD COLUMN is_estimated INTEGER DEFAULT 0")
+            # --- 失敗の可視化と再試行のためのカラム ---
+            if "attempt_count" not in columns:
+                self.conn.execute("ALTER TABLE items ADD COLUMN attempt_count INTEGER DEFAULT 0")
+            if "last_error" not in columns:
+                self.conn.execute("ALTER TABLE items ADD COLUMN last_error TEXT")
+            if "last_attempted_at" not in columns:
+                self.conn.execute("ALTER TABLE items ADD COLUMN last_attempted_at TIMESTAMP")
 
     def update_expiry(self, item_id: str, expiry_date: str, is_estimated: bool = True):
         """
-        [New] 賞味期限情報の更新
+        [New] 賞味期限情報の更新。試行回数・最終試行時刻も併せて更新する。
         """
         with self.conn:
             self.conn.execute(
                 """
                 UPDATE items
-                SET expiry_date = ?, is_estimated = ?
+                SET expiry_date = ?, is_estimated = ?,
+                    attempt_count = attempt_count + 1,
+                    last_attempted_at = ?, last_error = NULL
                 WHERE id = ?
             """,
-                (expiry_date, 1 if is_estimated else 0, item_id),
+                (
+                    expiry_date,
+                    STATUS_ESTIMATED if is_estimated else STATUS_UNPROCESSED,
+                    datetime.now().isoformat(),
+                    item_id,
+                ),
             )
 
     def add_or_update_item(self, name: str, location: str):
         """
-        アイテムの追加または場所の更新（さらにシンプルに）
+        アイテムの追加または場所の更新。
+
+        既存行の推定結果 (expiry_date / is_estimated / attempt_count) は保持する。
+        以前は INSERT OR REPLACE だったため、同じアイテムを登録し直すと
+        推定済みの賞味期限とステータスが消えていた（SQLiteのREPLACEはDELETE+INSERT）。
         """
         now = datetime.now().isoformat()
 
-        # 1. SQLite: パラメータは3つだけで完結
+        # 1. SQLite: 場所と更新日時のみUPSERTする
         with self.conn:
             self.conn.execute(
                 """
-                INSERT OR REPLACE INTO items (id, location, updated_at)
+                INSERT INTO items (id, location, updated_at)
                 VALUES (?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    location = excluded.location,
+                    updated_at = excluded.updated_at
             """,
                 (name, location, now),
             )
@@ -133,6 +165,12 @@ class InventoryDAO:
                 metadatas=[{"location": location, "updated_at": now}],
                 documents=[f"{name}は{location}にある"],
             )
+
+    def get_item(self, item_id: str) -> Optional[Dict]:
+        """1件取得（推定済みかどうかの判定などに使う）"""
+        cursor = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def get_all_items(self, sort_by_date: bool = True):
         """ダッシュボード用の全件取得 (SQLiteから高速取得)"""
@@ -253,18 +291,22 @@ class InventoryDAO:
         row = cursor.fetchone()
         return row["count"] if row else 0
 
-    def get_items_for_backfill(self, limit: int = 5) -> List[Dict]:
+    def get_items_for_backfill(self, limit: int = 5, max_attempts: int = 3) -> List[Dict]:
         """
-        推定がまだ行われていないアイテムを取得する。
-        is_estimated = 0 のものを対象とする。
+        推定がまだ確定していないアイテムを取得する。
+
+        対象は 未処理(0) と 失敗(3)。失敗は max_attempts 回まで再試行する
+        （無限リトライでBraveのクォータを浪費しないための上限）。
+        未処理を優先し、その後は試行回数の少ない順に処理する。
         """
         cursor = self.conn.execute(
             """
             SELECT * FROM items
-            WHERE is_estimated = 0
+            WHERE is_estimated IN (?, ?) AND attempt_count < ?
+            ORDER BY is_estimated ASC, attempt_count ASC, updated_at DESC
             LIMIT ?
         """,
-            (limit,),
+            (STATUS_UNPROCESSED, STATUS_FAILED, max_attempts, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -277,10 +319,30 @@ class InventoryDAO:
             self.conn.execute(
                 """
                 UPDATE items
-                SET is_estimated = 2
+                SET is_estimated = ?, attempt_count = attempt_count + 1,
+                    last_attempted_at = ?, last_error = NULL
                 WHERE id = ?
             """,
-                (item_id,),
+                (STATUS_NON_FOOD, datetime.now().isoformat(), item_id),
+            )
+
+    def mark_estimation_failed(self, item_id: str, error: str):
+        """
+        推定に失敗したことを記録する (is_estimated = 3)。
+
+        「未処理のまま何も起きない」状態をなくすためのステータス。
+        ダッシュボードに ⚠️失敗 として表示され、attempt_count が上限に達するまで
+        日次バックフィルが再試行する。
+        """
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE items
+                SET is_estimated = ?, attempt_count = attempt_count + 1,
+                    last_attempted_at = ?, last_error = ?
+                WHERE id = ?
+            """,
+                (STATUS_FAILED, datetime.now().isoformat(), (error or "")[:200], item_id),
             )
 
     def update_item_state(self, item_id: str, expiry_date: Optional[str], is_estimated: int):
@@ -292,14 +354,27 @@ class InventoryDAO:
         now = datetime.now().isoformat()
 
         with self.conn:
-            self.conn.execute(
-                """
-                UPDATE items
-                SET expiry_date = ?, is_estimated = ?, updated_at = ?
-                WHERE id = ?
-            """,
-                (expiry_date, is_estimated, now, item_id),
-            )
+            if is_estimated == STATUS_UNPROCESSED:
+                # 手動で「未処理」に戻したときは再試行カウンタもリセットして
+                # バックフィルの対象に戻す（そうしないと試行上限に達した行を再実行できない）
+                self.conn.execute(
+                    """
+                    UPDATE items
+                    SET expiry_date = ?, is_estimated = ?, updated_at = ?,
+                        attempt_count = 0, last_error = NULL
+                    WHERE id = ?
+                """,
+                    (expiry_date, is_estimated, now, item_id),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE items
+                    SET expiry_date = ?, is_estimated = ?, updated_at = ?
+                    WHERE id = ?
+                """,
+                    (expiry_date, is_estimated, now, item_id),
+                )
 
             # ChromaDB側のメタデータも更新（整合性維持のため）
             # データがない場合のエラーを避けるため、try-exceptなどはあえて入れず、

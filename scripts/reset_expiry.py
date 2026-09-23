@@ -9,11 +9,14 @@ def reset_all_items():
     conn = sqlite3.connect(str(SQLITE_DB_PATH))
 
     with conn:
-        # 全アイテムの賞味期限を NULL にし、ステータスを 0 (未推定) に戻す
+        # 全アイテムの賞味期限を NULL にし、ステータスを 0 (未推定) に戻す。
+        # 試行回数と失敗理由もリセットして、日次バックフィルの対象に戻す。
         conn.execute("""
             UPDATE items
             SET expiry_date = NULL,
-                is_estimated = 0
+                is_estimated = 0,
+                attempt_count = 0,
+                last_error = NULL
         """)
 
         # 念のため使用量カウントなどはリセットしない（今月のAPI使用量は維持すべきだから）

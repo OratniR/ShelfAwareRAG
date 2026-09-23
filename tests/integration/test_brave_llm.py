@@ -2,11 +2,12 @@
 import os
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from dotenv import load_dotenv
 
+from shelf_aware.config import settings
 from shelf_aware.estimation import ExpirationEstimator
+from tests._llm import llm_server_available
 
 load_dotenv()
 
@@ -40,19 +41,15 @@ async def test_real_brave_search_connection(estimator, mock_dao):
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_llm_json_format(estimator):
-    # LLMサーバーのURL確認
-    llm_url = os.getenv("LLM_API_URL", "http://localhost:8000/v1/chat/completions")
+    """実LLMサーバーが応答する場合のみ、JSON抽出が機能することを確認する。"""
+    if not await llm_server_available():
+        pytest.skip(f"LLM Server is not reachable at {settings.LLM_API_BASE}")
 
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.get(llm_url.replace("/chat/completions", "/models"), timeout=3.0)
-        except Exception:
-            pytest.skip(f"LLM Server is not reachable at {llm_url}")
-
-    # テスト
     item_name = "未開封の牛乳"
     dummy_context = "牛乳は冷蔵で1週間ほど持ちます。"
     result_json = await estimator._call_llm(item_name, dummy_context)
 
     assert isinstance(result_json, dict)
     assert "is_food" in result_json
+    # 解釈不能な出力は例外になるため、ここまで来たら日数が取れているはず
+    assert result_json.get("extracted_days"), f"日数が抽出できていない: {result_json}"
