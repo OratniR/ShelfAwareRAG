@@ -11,6 +11,7 @@ Raspberry Pi 5 前提の注意点:
 """
 
 import asyncio
+import datetime as dt
 import logging
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from shelf_aware.config import settings
+from shelf_aware.constants import JST
 from shelf_aware.estimation import apply_estimation_outcome
 
 if TYPE_CHECKING:
@@ -27,14 +29,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# tzdata が無い環境（python:slim など）でも動くよう、主要なタイムゾーンは固定オフセットで代替する
+_FIXED_OFFSETS = {
+    "Asia/Tokyo": JST,
+    "UTC": dt.timezone.utc,
+}
 
-def _resolve_timezone() -> Optional[ZoneInfo]:
-    """設定されたタイムゾーンを解決する（tzdataが無い環境でも落とさない）。"""
+
+def _resolve_timezone() -> Optional[dt.tzinfo]:
+    """
+    設定されたタイムゾーンを解決する。
+
+    コンテナに tzdata (/usr/share/zoneinfo) が無いと ZoneInfo は失敗するため、
+    既知のタイムゾーンは固定オフセットへフォールバックする。
+    日本はサマータイムが無いので Asia/Tokyo = +09:00 固定で正しい。
+    """
     try:
         return ZoneInfo(settings.BACKFILL_TIMEZONE)
-    except Exception as e:  # noqa: BLE001 - tzdata未インストール時はローカル時刻で動かす
-        logger.warning(f"⚠️ Timezone '{settings.BACKFILL_TIMEZONE}' is unavailable ({e}). Using local time.")
-        return None
+    except Exception as e:  # noqa: BLE001 - tzdata未インストール時も動作を継続する
+        logger.warning(f"⚠️ Timezone '{settings.BACKFILL_TIMEZONE}' is unavailable ({e}).")
+
+    fixed = _FIXED_OFFSETS.get(settings.BACKFILL_TIMEZONE)
+    if fixed is not None:
+        logger.info(f"🕒 Using fixed offset {fixed.tzname(None)} for {settings.BACKFILL_TIMEZONE}.")
+        return fixed
+
+    local = dt.datetime.now().astimezone().tzinfo
+    logger.warning(f"🕒 Falling back to the container's local timezone ({local}).")
+    return local
 
 
 class BackfillScheduler:
@@ -43,8 +65,7 @@ class BackfillScheduler:
         self.dao = dao
         self.estimator = estimator
         self.timezone = _resolve_timezone()
-        # timezone=None を明示的に渡すとAPScheduler側で扱いが変わるため、解決できた場合のみ渡す
-        self.scheduler = AsyncIOScheduler(timezone=self.timezone) if self.timezone else AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=self.timezone)
 
         # 安全装置: 月間制限の9割を超えたらバックフィルは停止する
         self.SAFETY_QUOTA_LIMIT = 1800
@@ -71,8 +92,7 @@ class BackfillScheduler:
             max_instances=1,
         )
         self.scheduler.start()
-        tz_label = self.timezone or "local time"
-        logger.info(f"🕒 Backfill Scheduler started (daily at {settings.BACKFILL_HOUR}:00 {tz_label})")
+        logger.info(f"🕒 Backfill Scheduler started (daily at {settings.BACKFILL_HOUR}:00 {self.timezone})")
 
     def shutdown(self):
         """アプリ終了時にスケジューラーを止める"""

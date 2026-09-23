@@ -19,8 +19,9 @@ services:
       - LLM_MODEL=${MODEL_FILENAME:-gemma-2-2b-jpn-it-q2km.gguf}
       # LLMにJSON出力を強制する: auto(対応していれば使う) / off
       - LLM_JSON_MODE=${LLM_JSON_MODE:-auto}
-      # 日次バックフィルの実行時刻(JST)。賞味期限の計算もJSTになる
-      - TZ=${TZ:-Asia/Tokyo}
+      # コンテナのタイムゾーン。tzdataを入れずに済むPOSIX形式(JST-9 = UTC+9)を使う。
+      # ログの時刻・登録日時がJSTになる（賞味期限とバックフィル時刻はコード側でJST固定）。
+      - TZ=${TZ:-JST-9}
       - BACKFILL_HOUR=${BACKFILL_HOUR:-3}
       - NOTION_API_KEY=${NOTION_API_KEY}           # Reads from .env or host env
       - NOTION_DATASOURCE_ID=${NOTION_DATASOURCE_ID}
@@ -99,7 +100,7 @@ services:
       - ./src:/app/src
     environment:
       - PYTHONPATH=/app/src
-      - TZ=${TZ:-Asia/Tokyo}
+      - TZ=${TZ:-JST-9}
     command: ["uv", "run", "streamlit", "run", "src/shelf_aware/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
     depends_on:
       - rag-api

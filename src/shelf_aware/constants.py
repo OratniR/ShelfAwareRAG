@@ -1,4 +1,10 @@
+import datetime as dt
 from pathlib import Path
+
+# 日本標準時。
+# 日本はサマータイムが無くオフセットが一定なので、tzdata に依存しない固定オフセットで正しく扱える
+# （コンテナに /usr/share/zoneinfo が無い環境でも ZoneInfoNotFoundError にならない）。
+JST = dt.timezone(dt.timedelta(hours=9), "JST")
 
 # プロジェクトのルートディレクトリ (ShelfAwareRAG/) を取得
 # constants.py が src/shelf_aware/ にある前提

@@ -1,6 +1,7 @@
 # tests/unit/test_scheduler.py
 """日次バックフィルのスケジューラー配線のテスト（実際のジョブ実行はしない）。"""
 
+import datetime as dt
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -30,10 +31,29 @@ async def test_scheduler_registers_daily_job(scheduler):
         assert job is not None
         assert job.next_run_time.hour == settings.BACKFILL_HOUR
         # コンテナのTZがUTCでもJST 3:00に動くこと
-        if scheduler.timezone is not None:
-            assert str(job.trigger.timezone) == settings.BACKFILL_TIMEZONE
+        assert dt.datetime.now(job.trigger.timezone).utcoffset() == dt.timedelta(hours=9)
     finally:
         scheduler.shutdown()
+
+
+def test_timezone_falls_back_without_tzdata(monkeypatch):
+    """
+    tzdata が無いコンテナでも Asia/Tokyo を +09:00 固定で解決できること。
+
+    (python:slim には /usr/share/zoneinfo が無いため、Dockerイメージに tzdata を
+     追加せずに済ませるためのフォールバック)
+    """
+    import shelf_aware.scheduler as scheduler_module
+
+    def _raise(_name):
+        raise ModuleNotFoundError("No time zone found with key Asia/Tokyo")
+
+    monkeypatch.setattr(scheduler_module, "ZoneInfo", _raise)
+
+    resolved = scheduler_module._resolve_timezone()
+
+    assert resolved.utcoffset(None) == dt.timedelta(hours=9)
+    assert resolved.tzname(None) == "JST"
 
 
 @pytest.mark.asyncio

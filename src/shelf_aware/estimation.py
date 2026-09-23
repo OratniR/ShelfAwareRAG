@@ -29,7 +29,7 @@ import httpx
 from langfuse import get_client, observe
 
 from shelf_aware.config import settings
-from shelf_aware.constants import EXCLUDED_DOMAINS
+from shelf_aware.constants import EXCLUDED_DOMAINS, JST
 from shelf_aware.prompts import (
     EXPIRATION_ESTIMATION_PROMPT,
     EXPIRATION_ESTIMATION_RETRY_PROMPT,
@@ -533,7 +533,8 @@ class ExpirationEstimator:
             },
         )
 
-        expiry_date = (dt.datetime.now() + dt.timedelta(days=estimated_days)).date().isoformat()
+        # 賞味期限は「日本時間の今日」を基準に計算する（コンテナのTZ設定に依存しない）
+        expiry_date = (dt.datetime.now(JST) + dt.timedelta(days=estimated_days)).date().isoformat()
         return done(
             EstimationOutcome(
                 EstimationResult.SUCCESS,
