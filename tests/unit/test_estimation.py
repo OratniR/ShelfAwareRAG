@@ -5,6 +5,7 @@
 外部依存 (Brave / LLMサーバー) は一切叩かない。
 """
 
+import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,9 +19,12 @@ from shelf_aware.estimation import (
     _build_search_context,
     _coerce_days,
     _extract_days_from_text,
+    _find_duration_expressions,
     _needs_retry,
     _parse_llm_json,
     _pick_expiry_sentences,
+    _resolve_days,
+    _response_quality,
     _salvage_llm_fields,
     apply_estimation_outcome,
 )
@@ -75,6 +79,71 @@ def test_coerce_days_variants():
     assert _coerce_days([99999]) == []
 
 
+# --- 単位換算はLLMにやらせない（コード側で解決する） ---
+def test_resolve_days_accepts_verbatim_periods():
+    """LLMは表記そのままを返し、日数への換算はコードが行う。"""
+    days, unresolved = _resolve_days({"is_food": True, "periods": ["2年", "半年"], "reason": "2年と半年"})
+
+    assert days == [730.0, 182.5]
+    assert unresolved == []
+
+
+def test_resolve_days_reinterprets_unitless_number():
+    """
+    「2年」の "2" を 2日 として扱ってしまう事故の回帰テスト（お酢の事例）。
+
+    LLMが extracted_days=[0, 2] / reason="未開封で2年という記述あり" を返しても 730日 になること。
+    """
+    data = {"is_food": True, "extracted_days": [0, 2], "reason": "未開封で2年という記述あり"}
+
+    days, unresolved = _resolve_days(data)
+
+    assert days == [730.0]
+    assert unresolved == []
+
+
+def test_resolve_days_reinterprets_months_and_weeks():
+    assert _resolve_days({"is_food": True, "extracted_days": [6], "reason": "未開封で6ヶ月"})[0] == [180.0]
+    assert _resolve_days({"is_food": True, "extracted_days": [2], "reason": "2週間ほど"})[0] == [14.0]
+
+
+def test_resolve_days_keeps_day_unit_as_is():
+    """「2日」と書いてある裸の数値は 2日 のまま（1倍なので解釈し直さない）。"""
+    days, unresolved = _resolve_days({"is_food": True, "extracted_days": [2], "reason": "開封後は2日"})
+
+    assert days == [2.0]
+    assert unresolved == []
+
+
+def test_resolve_days_keeps_large_unitless_number():
+    """365以上の裸の数値は単位落ちの可能性が低いので、そのまま日数として扱う。"""
+    days, unresolved = _resolve_days({"is_food": True, "extracted_days": [730], "reason": "長期間保存可能"})
+
+    assert days == [730.0]
+    assert unresolved == [730.0]
+
+
+def test_resolve_days_marks_small_unitless_number_as_unresolved():
+    days, unresolved = _resolve_days({"is_food": True, "extracted_days": [2], "reason": "長期間"})
+
+    assert days == [2.0]
+    assert unresolved == [2.0]
+
+
+def test_find_duration_expressions_returns_value_and_days():
+    assert _find_duration_expressions("未開封で2年") == [(2.0, 730.0)]
+    assert _find_duration_expressions("賞味期限は2026年3月1日") == []
+
+
+def test_response_quality_ranks_unit_resolved_highest():
+    assert _response_quality(None) == 0
+    assert _response_quality({"is_food": False}) == 1
+    assert _response_quality({"is_food": True}) == 2
+    assert _response_quality({"is_food": True, "extracted_days": [2]}) == 3
+    assert _response_quality({"is_food": True, "periods": ["2年"]}) == 4
+    assert _response_quality({"is_food": True, "extracted_days": [2], "reason": "2年"}) == 4
+
+
 # --- LLM出力の解釈 ---
 def test_parse_llm_json_variants():
     assert _parse_llm_json('{"is_food": true, "extracted_days": [7]}') == {"is_food": True, "extracted_days": [7]}
@@ -109,7 +178,13 @@ def test_needs_retry():
     # 食品なのに日数が無い = 再試行対象（以前はここがSKIPPEDに化けていた）
     assert _needs_retry({"is_food": True}) is True
     assert _needs_retry({"is_food": True, "extracted_days": []}) is True
+    # 単位付きなら確定できるので再試行しない
+    assert _needs_retry({"is_food": True, "periods": ["2年"]}) is False
+    # 大きい裸の数値は日数として妥当（365日/730日など）なので再試行しない
     assert _needs_retry({"is_food": True, "extracted_days": [365]}) is False
+    # 小さい裸の数値は単位を落としている疑いが強いので聞き直す
+    assert _needs_retry({"is_food": True, "extracted_days": [2]}) is True
+    assert _needs_retry({"is_food": True, "extracted_days": [0, 2], "reason": "未開封で2年という記述あり"}) is False
 
 
 # --- 検索結果の整形 ---
@@ -169,14 +244,52 @@ def _mock_client(responses):
 
 @pytest.mark.asyncio
 async def test_call_llm_clean_json(estimator):
-    client, calls = _mock_client([('{"is_food": true, "extracted_days": [7], "reason": "ok"}', "stop")])
+    client, calls = _mock_client([('{"is_food": true, "periods": ["1週間"], "reason": "ok"}', "stop")])
 
     with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
         result = await estimator._call_llm("納豆", "context")
 
     assert result["is_food"] is True
-    assert result["extracted_days"] == [7]
+    assert _resolve_days(result)[0] == [7.0]
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_reasks_when_unit_is_missing(estimator):
+    """
+    単位の無い小さい数値が返ったら、表記そのままを求めて聞き直し、単位付きの回答を採用する。
+    （「2年」の 2 を 2日 として確定しないため）
+    """
+    client, calls = _mock_client(
+        [
+            ('{"is_food": true, "extracted_days": [2], "reason": "長持ちする"}', "stop"),
+            ('{"is_food": true, "periods": ["2年"], "reason": "2年"}', "stop"),
+        ]
+    )
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._call_llm("お酢", "context")
+
+    assert len(calls) == 2
+    assert _resolve_days(result)[0] == [730.0]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_keeps_better_first_result(estimator):
+    """再試行が非食品などを返しても、1回目の有効な結果を捨てないこと。"""
+    client, calls = _mock_client(
+        [
+            ('{"is_food": true, "extracted_days": [2], "reason": "長持ちする"}', "stop"),
+            ('{"is_food": false, "periods": [], "reason": "不明"}', "stop"),
+        ]
+    )
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._call_llm("お酢", "context")
+
+    assert len(calls) == 2
+    assert result["is_food"] is True
+    assert _resolve_days(result)[0] == [2.0]
 
 
 @pytest.mark.asyncio
@@ -314,6 +427,44 @@ async def test_estimate_expiration_reports_error_when_llm_fails(estimator):
 
     assert outcome.status == EstimationResult.ERROR
     assert "llm_extraction_failed" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_estimate_expiration_converts_years_not_days():
+    """
+    「未開封で2年」を 2日 と解釈してしまう事故の回帰テスト（お酢の事例）。
+
+    LLMが extracted_days=[0, 2] を返しても、reason の「2年」から 730日 として解決すること。
+    """
+    estimator = ExpirationEstimator()
+    estimator.brave_api_key = "test-brave-key"
+    estimator._classify_item_type = AsyncMock(return_value={"is_food": True})
+    estimator._search_brave = AsyncMock(return_value="- お酢: 未開封なら2年間")
+    estimator._call_llm = AsyncMock(
+        return_value={"is_food": True, "extracted_days": [0, 2], "reason": "未開封で2年という記述あり"}
+    )
+
+    outcome = await estimator.estimate_expiration("お酢", MagicMock())
+
+    assert outcome.status == EstimationResult.SUCCESS
+    assert outcome.data["days_offset"] == 730
+    expected = (dt.datetime.now() + dt.timedelta(days=730)).date().isoformat()
+    assert outcome.data["expiry_date"] == expected
+
+
+@pytest.mark.asyncio
+async def test_estimate_expiration_uses_verbatim_periods():
+    """プロンプトを直した後の経路: periods に表記そのままが入っていればコード側で換算する。"""
+    estimator = ExpirationEstimator()
+    estimator.brave_api_key = "test-brave-key"
+    estimator._classify_item_type = AsyncMock(return_value={"is_food": True})
+    estimator._search_brave = AsyncMock(return_value="- お酢: 未開封なら2年間")
+    estimator._call_llm = AsyncMock(return_value={"is_food": True, "periods": ["2年"], "reason": "2年間"})
+
+    outcome = await estimator.estimate_expiration("お酢", MagicMock())
+
+    assert outcome.status == EstimationResult.SUCCESS
+    assert outcome.data["days_offset"] == 730
 
 
 # --- DBへの反映 (結果 → ステータス) ---

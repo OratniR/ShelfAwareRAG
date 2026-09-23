@@ -51,6 +51,9 @@ SEARCH_RESULT_COUNT = 5
 CONTEXT_CHAR_BUDGET = 1200
 # 常識外れの推定値（10年超）は捨てる
 MAX_REASONABLE_DAYS = 3650.0
+# これ以下の裸の数値は「2年」の "2" のように単位を落としている疑いが強いとみなす
+# （この値を超える裸の数値は、日数として妥当なので再試行しない）
+UNIT_AMBIGUOUS_MAX_DAYS = 31.0
 
 
 class EstimationResult(str, Enum):
@@ -126,9 +129,15 @@ _DURATION_UNITS: Tuple[Tuple[re.Pattern, float], ...] = (
     (re.compile(r"(\d+(?:\.\d+)?)\s*(?:日間|日)"), 1.0),
 )
 _SALVAGE_IS_FOOD_RE = re.compile(r'"is[_\- ]?food"\s*[:：]\s*"?(true|false|yes|no|はい|いいえ)"?', re.IGNORECASE)
+_SALVAGE_PERIODS_RE = re.compile(r'"(?:periods|extracted[_\- ]?periods|durations)"\s*[:：]\s*\[([^\]]*)', re.DOTALL)
 _SALVAGE_DAYS_RE = re.compile(r'"extracted[_\- ]?days?"\s*[:：]\s*\[([^\]]*)', re.DOTALL)
 _SALVAGE_REASON_RE = re.compile(r'"reason"\s*[:：]\s*"([^"]{0,120})')
 _TRUTHY_WORDS = {"true", "yes", "はい"}
+_BARE_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# LLMが期間を入れてくる可能性のあるキー（表記そのままの文字列を期待する）
+_PERIOD_KEYS = ("periods", "extracted_periods", "expiry_periods", "durations")
+# 「2年」の "2" のように単位を落とした数値を解釈し直すための根拠として読むキー
+_EVIDENCE_KEYS = ("reason", "evidence", "note", "summary")
 
 
 def _clean_ws(text: Any) -> str:
@@ -138,9 +147,12 @@ def _clean_ws(text: Any) -> str:
     return re.sub(r"\s+", " ", _HTML_TAG_RE.sub("", str(text))).strip()
 
 
-def _extract_days_from_text(text: str) -> List[float]:
+def _find_duration_expressions(text: str) -> List[Tuple[float, float]]:
     """
-    日本語テキストから「1年」「半年」「2ヶ月」「10日」「1週間」等を日数へ変換して抽出する。
+    テキスト中の期間表現を (元の数値, 日数) のリストとして返す。
+
+    「2年」-> (2.0, 730.0)。「半年」のように数値を持たない表現は数値 0.0 として返す
+    （日数の解釈し直しに使うのは数値付きの表現のみ）。
 
     「2026年」「3月1日」のような日付リテラルは事前に除去し、誤検出を防ぐ。
     """
@@ -149,20 +161,27 @@ def _extract_days_from_text(text: str) -> List[float]:
     normalized = unicodedata.normalize("NFKC", text)
     normalized = _DATE_LITERAL_RE.sub(" ", normalized)
 
-    days: List[float] = [182.5 for _ in _HALF_YEAR_RE.finditer(normalized)]
+    found: List[Tuple[float, float]] = [(0.0, 182.5)] * len(_HALF_YEAR_RE.findall(normalized))
     for pattern, unit_days in _DURATION_UNITS:
         for match in pattern.finditer(normalized):
             value = float(match.group(1))
             # 1000以上は西暦などのノイズとみなす（「2026年」→365日 を防ぐ）
             if value <= 0 or value >= 1000:
                 continue
-            days.append(value * unit_days)
-    return days
+            found.append((value, value * unit_days))
+    return found
+
+
+def _extract_days_from_text(text: str) -> List[float]:
+    """
+    日本語テキストから「1年」「半年」「2ヶ月」「10日」「1週間」等を日数へ変換して抽出する。
+    """
+    return [days for _, days in _find_duration_expressions(text)]
 
 
 def _coerce_days(value: Any) -> List[float]:
     """
-    LLMが返した extracted_days を数値リストへ正規化する。
+    LLMが返した日数表現を数値リストへ正規化する。
 
     [180, 365] / ["180"] / ["1年", "半年"] / "2ヶ月" のような表記ゆれを吸収する。
     """
@@ -178,8 +197,8 @@ def _coerce_days(value: Any) -> List[float]:
             number = float(item)
         elif isinstance(item, str):
             token = item.strip()
-            if re.fullmatch(r"\d+(?:\.\d+)?", token):
-                number = float(token)
+            if _is_bare_number(token):
+                number = float(unicodedata.normalize("NFKC", token))
             else:
                 days.extend(day for day in _extract_days_from_text(token) if day <= MAX_REASONABLE_DAYS)
                 continue
@@ -188,6 +207,81 @@ def _coerce_days(value: Any) -> List[float]:
         if 0 < number <= MAX_REASONABLE_DAYS:
             days.append(number)
     return days
+
+
+def _is_bare_number(value: str) -> bool:
+    """単位を持たない数値だけの文字列かどうか（例: "2", "365"）。"""
+    return bool(_BARE_NUMBER_RE.fullmatch(unicodedata.normalize("NFKC", (value or "").strip())))
+
+
+def _reinterpret_unitless(numbers: List[float], evidence_text: str) -> Tuple[List[float], List[float]]:
+    """
+    単位を落とした数値を、応答中の単位付き表現から解釈し直す。
+
+    例: extracted_days=[0, 2], reason="未開封で2年という記述あり"
+        -> 2 を「2日」ではなく「2年」= 730日 として扱う。
+
+    単位の根拠が見つからない数値は日数として扱い、unresolved として返す（呼び出し側で警告する）。
+    """
+    unit_map: Dict[float, float] = {}
+    for value, days in _find_duration_expressions(evidence_text):
+        if value > 0:
+            # _DURATION_UNITS は 年→月→週→日 の順なので、大きい単位が優先される
+            unit_map.setdefault(value, days)
+
+    resolved: List[float] = []
+    unresolved: List[float] = []
+    for number in numbers:
+        if number in unit_map:
+            resolved.append(unit_map[number])
+        else:
+            resolved.append(number)
+            unresolved.append(number)
+    return resolved, unresolved
+
+
+def _resolve_days(data: Dict[str, Any]) -> Tuple[List[float], List[float]]:
+    """
+    LLM応答から日数を解決する。
+
+    - 単位付きの表記 ("2年", "半年") はコード側で日数へ換算する（LLMに換算させない）
+    - 単位を落とした数値は、同じ数値が「n年」「nヶ月」「n週間」として応答中に現れていれば
+      その単位で解釈し直す
+    - 根拠が無い裸の数値は日数とみなすが unresolved として返す
+
+    戻り値: (日数リスト, 単位の根拠が無かった数値のリスト)
+    """
+    raw_values: List[Any] = []
+    for key in (*_PERIOD_KEYS, "extracted_days"):
+        if key not in data:
+            continue
+        value = data[key]
+        raw_values.extend(list(value) if isinstance(value, (list, tuple, set)) else [value])
+
+    unit_values: List[Any] = []
+    numbers: List[float] = []
+    evidence: List[str] = []
+    for item in raw_values:
+        if isinstance(item, bool) or item is None:
+            continue
+        if isinstance(item, (int, float)):
+            numbers.append(float(item))
+        elif isinstance(item, str):
+            if _is_bare_number(item):
+                numbers.append(float(unicodedata.normalize("NFKC", item.strip())))
+            else:
+                unit_values.append(item)
+                evidence.append(item)
+
+    for key in _EVIDENCE_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            evidence.append(value)
+
+    resolved, unresolved = _reinterpret_unitless(
+        [number for number in numbers if 0 < number <= MAX_REASONABLE_DAYS], " ".join(evidence)
+    )
+    return _coerce_days(unit_values) + resolved, unresolved
 
 
 def _first_json_object(text: str) -> Optional[str]:
@@ -223,7 +317,7 @@ def _parse_llm_json(content: str) -> Optional[Dict[str, Any]]:
 
 def _salvage_llm_fields(raw: str) -> Optional[Dict[str, Any]]:
     """
-    壊れた／途中で切れたJSONから is_food と extracted_days だけを正規表現で救出する。
+    壊れた／途中で切れたJSONから is_food と期間表現だけを正規表現で救出する。
 
     キー構造が残っている場合のみ救出し、地の文からの推測はしない（誤推定を避けるため）。
     """
@@ -236,9 +330,10 @@ def _salvage_llm_fields(raw: str) -> Optional[Dict[str, Any]]:
         is_food = match.group(1).strip().lower() in _TRUTHY_WORDS
 
     days: List[float] = []
-    match = _SALVAGE_DAYS_RE.search(raw)
-    if match:
-        days = _coerce_days([token for token in re.split(r"[,、\s]+", match.group(1)) if token])
+    for pattern in (_SALVAGE_PERIODS_RE, _SALVAGE_DAYS_RE):
+        match = pattern.search(raw)
+        if match:
+            days.extend(_coerce_days([token for token in re.split(r"[,、\s]+", match.group(1)) if token]))
 
     if is_food is None and not days:
         return None
@@ -252,12 +347,40 @@ def _salvage_llm_fields(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def _needs_retry(data: Optional[Dict[str, Any]]) -> bool:
-    """再試行すべきか。非食品と明示されていれば再試行しない。"""
+    """
+    再試行すべきか。
+
+    - 非食品と明示されていれば再試行しない
+    - 日数が取れない場合は再試行する
+    - 小さい裸の数値しか無い場合は、単位を落としている疑いが強いので
+      表記そのままを求めて再試行する（「2年」の "2" を 2日 と確定してしまう事故を防ぐ）
+    """
     if not data:
         return True
     if not data.get("is_food"):
         return False
-    return not _coerce_days(data.get("extracted_days"))
+    days, unresolved = _resolve_days(data)
+    if not days:
+        return True
+    return any(number <= UNIT_AMBIGUOUS_MAX_DAYS for number in unresolved)
+
+
+def _response_quality(data: Optional[Dict[str, Any]]) -> int:
+    """
+    応答の品質スコア（大きいほど良い）。再試行結果を採用するかの判断に使う。
+
+    再試行が1回目より悪い場合（非食品に反転した等）に、良い結果を捨てないための仕組み。
+    """
+    if not data:
+        return 0
+    if not data.get("is_food"):
+        return 1  # 非食品判定も情報としては有効
+    days, unresolved = _resolve_days(data)
+    if days and not unresolved:
+        return 4  # 単位が確定した日数がある = 最良
+    if days:
+        return 3  # 日数はあるが単位の根拠が弱い
+    return 2  # 食品だが日数が無い
 
 
 def _pick_expiry_sentences(text: str, limit: int = 3) -> str:
@@ -391,12 +514,24 @@ class ExpirationEstimator:
         if not extracted_data.get("is_food"):
             return done(EstimationOutcome(EstimationResult.NON_FOOD, reason="llm_says_non_food"))
 
-        days_list = _coerce_days(extracted_data.get("extracted_days"))
+        days_list, unitless_days = _resolve_days(extracted_data)
+        if unitless_days:
+            # 「2年」の "2" のような単位落ちの可能性がある。日数として扱うが必ず記録に残す。
+            logger.warning(f"⚠️ 単位の根拠が無い数値を日数として扱います: {unitless_days} (item={item_name})")
         estimated_days = self._calculate_geometric_mean(days_list)
 
         if not estimated_days:
             # 検索は成功したが日数を取り出せなかった = 「失敗」。未処理のまま放置しない。
             return done(EstimationOutcome(EstimationResult.ERROR, reason="no_days_extracted"))
+
+        update_langfuse(
+            "span",
+            metadata={
+                "days_list": days_list,
+                "unitless_days": unitless_days,
+                "days_source": "assumed_days" if unitless_days else "explicit_unit",
+            },
+        )
 
         expiry_date = (dt.datetime.now() + dt.timedelta(days=estimated_days)).date().isoformat()
         return done(
@@ -596,7 +731,8 @@ class ExpirationEstimator:
             retried = _parse_llm_json(retry_raw) or _salvage_llm_fields(retry_raw)
             raw, finish_reason = retry_raw, retry_finish_reason
             usage = _merge_usage(usage, retry_usage)
-            if retried is not None:
+            # 再試行の結果が1回目より良い場合のみ採用する（非食品への反転などで悪化させない）
+            if retried is not None and _response_quality(retried) > _response_quality(data):
                 data = retried
 
         if data is None:
