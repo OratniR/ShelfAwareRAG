@@ -206,7 +206,7 @@ class ExpirationEstimator:
         payload = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
-            "max_tokens": 30,
+            "max_tokens": 200,
             # "response_format": {"type": "json_object"},
             "model": settings.LLM_MODEL,
         }
@@ -222,12 +222,22 @@ class ExpirationEstimator:
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
                 content = content.replace("```json", "").replace("```", "").strip()
-                if re.search(r"false", content, re.IGNORECASE):
-                    return {"is_food": False}
-                elif re.search(r"true", content, re.IGNORECASE):
+                # まず完全なJSONとしてパースを試みる
+                try:
+                    data = json.loads(content)
+                    return data
+                
+                except json.JSONDecodeError:
+                    # 前後に余計な文字列が含まれている場合の抽出
+                    json_match = re.search(r"\{.*?\}", content, re.DOTALL)
+                    if json_match:
+                        return json.loads(json_match.group(0))
+                    
+                    # パース不能時のフォールバック判定
+                    if re.search(r"false", content, re.IGNORECASE):
+                        return {"is_food": False}
                     return {"is_food": True}
-                else:
-                    return json.loads(content)
+                
             except Exception as e:
                 logger.error(f"LLM Extraction Error: {e}")
                 return {"is_food": False}
