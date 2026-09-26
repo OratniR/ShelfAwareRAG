@@ -34,6 +34,7 @@ from shelf_aware.prompts import (
     EXPIRATION_ESTIMATION_PROMPT,
     EXPIRATION_ESTIMATION_RETRY_PROMPT,
     FOOD_CLASSIFICATION_PROMPT,
+    FOOD_CONFIRMATION_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -43,9 +44,9 @@ logger = logging.getLogger(__name__)
 
 # --- パイプラインの調整値 ---
 # Raspberry Pi 5 はCPUのみで1回の生成に20〜40秒かかるため、タイムアウトは長めに取る。
-CLASSIFY_TIMEOUT_SECONDS = 120.0
 LLM_TIMEOUT_SECONDS = 180.0
 EXTRACTION_MAX_TOKENS = 400
+CLASSIFY_MAX_TOKENS = 40
 SEARCH_RESULT_COUNT = 5
 # LLMに渡す検索コンテキストの上限文字数（llama-server のコンテキスト窓と相談）
 CONTEXT_CHAR_BUDGET = 1200
@@ -383,6 +384,165 @@ def _response_quality(data: Optional[Dict[str, Any]]) -> int:
     return 2  # 食品だが日数が無い
 
 
+# ---------------------------------------------------------------------------
+# 食品判定（Phase 1）: 既知の食べ物はコードで確定し、LLMの誤判定を防ぐ
+# ---------------------------------------------------------------------------
+
+# 語尾がこれらで終わっていれば「食べ物」と確定できる（LLMに聞かずに済む）
+_FOOD_SUFFIXES: Tuple[str, ...] = (
+    "酢",
+    "ポン酢",
+    "醤油",
+    "しょうゆ",
+    "味噌",
+    "みそ",
+    "塩",
+    "砂糖",
+    "みりん",
+    "料理酒",
+    "酒",
+    "焼酎",
+    "油",
+    "オイル",
+    "ソース",
+    "ケチャップ",
+    "マヨネーズ",
+    "ドレッシング",
+    "だし",
+    "コンソメ",
+    "ブイヨン",
+    "ジャム",
+    "はちみつ",
+    "蜂蜜",
+    "シロップ",
+    "スパイス",
+    "香辛料",
+    "胡椒",
+    "こしょう",
+    "コショウ",
+    "カレー",
+    "ルウ",
+    "小麦粉",
+    "片栗粉",
+    "パン粉",
+    "粉",
+    "豆腐",
+    "納豆",
+    "こんにゃく",
+    "厚揚げ",
+    "油揚げ",
+    "ちくわ",
+    "かまぼこ",
+    "パン",
+    "麺",
+    "うどん",
+    "そば",
+    "そうめん",
+    "パスタ",
+    "スパゲッティ",
+    "ラーメン",
+    "米",
+    "チーズ",
+    "バター",
+    "ヨーグルト",
+    "牛乳",
+    "卵",
+    "玉子",
+    "たまご",
+    "肉",
+    "魚",
+    "野菜",
+    "果物",
+    "フルーツ",
+    "缶詰",
+    "レトルト",
+    "コーヒー",
+    "紅茶",
+    "緑茶",
+    "茶",
+    "ジュース",
+    "ビール",
+    "ワイン",
+)
+# 語尾が上の一覧に当てはまっても食べ物ではないもの（誤って食品としないための例外）
+_FOOD_SUFFIX_GUARDS: Tuple[str, ...] = (
+    "機械油",
+    "潤滑油",
+    "灯油",
+    "軽油",
+    "精油",
+    "ミシン油",
+    "エンジンオイル",
+    "チェーンオイル",
+    "フライパン",
+)
+_FOOD_WORD_RE = re.compile(r"non[\s\-_]*food|food", re.IGNORECASE)
+# 「いいえ」系を先に並べる（「食べられません」を「食べられます」より先に判定するため）
+_YES_NO_RE = re.compile(
+    r"(いいえ|いや|no\b|false|non[\s\-_]*food|非食品|食べられません|食べられない|飲めません"
+    r"|はい|yes\b|true|食べられます|食べられる|飲めます|食品)",
+    re.IGNORECASE,
+)
+_TRUE_WORDS = {"true", "yes", "はい", "1"}
+_FALSE_WORDS = {"false", "no", "いいえ", "0"}
+
+
+def is_known_food(name: str) -> bool:
+    """
+    語尾から明らかに食べ物と判断できるものを、LLMに聞かずに food とする。
+
+    小型モデルは「雑塩」「豆腐」「料理酒」のような基本語でも「たまに」誤判定するため、
+    確実なものはコード側で確定させて判定を安定させる（LLM呼び出しの節約にもなる）。
+    """
+    normalized = _clean_ws(name)
+    if not normalized:
+        return False
+    if normalized.endswith(_FOOD_SUFFIX_GUARDS):
+        return False
+    return normalized.endswith(_FOOD_SUFFIXES)
+
+
+def _parse_is_food_text(text: str) -> Optional[bool]:
+    """
+    単語で答えられた場合の保険。
+
+    **最後に出てきた** food / non-food を採用する。小型モデルが
+    「『food』または『non-food』の一単語で答えてください」という制約文を復唱した場合に、
+    先頭の non-food を拾って食べ物を非食品と誤判定してしまうのを防ぐ。
+    """
+    matches = _FOOD_WORD_RE.findall(_clean_ws(text))
+    if not matches:
+        return None
+    return not matches[-1].lower().startswith("non")
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    """真偽値・文字列を bool へ正規化する（判定できない場合は None）。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = _clean_ws(value).lower()
+        if token in _TRUE_WORDS:
+            return True
+        if token in _FALSE_WORDS:
+            return False
+        return _parse_is_food_text(token)
+    return None
+
+
+def _parse_yes_no(text: str) -> Optional[bool]:
+    """「はい」「いいえ」形式の回答を bool へ変換する（不明なら None）。"""
+    match = _YES_NO_RE.search(_clean_ws(text))
+    if not match:
+        return None
+    token = match.group(1).lower()
+    if token in _FALSE_WORDS or token.startswith("no") or token.startswith("non"):
+        return False
+    return True
+
+
 def _pick_expiry_sentences(text: str, limit: int = 3) -> str:
     """
     検索結果の説明文から「期限に関係する文」を優先して抜き出す。
@@ -557,46 +717,68 @@ class ExpirationEstimator:
 
     @observe(as_type="generation", capture_input=False, capture_output=False)
     async def _classify_item_type(self, item_name: str) -> Dict[str, Any]:
-        """[Phase 1] 食品判定。通信・解析の失敗は LLMExtractionError として送出する。"""
+        """
+        [Phase 1] 食品判定。
+
+        誤って食べ物を「対象外」に固定してしまうのを防ぐため、3段構えにする:
+          1. 語尾から明らかな食べ物はコード側で確定（LLMに聞かない）
+          2. LLMにはJSONで答えさせる（"non-food" という語の復唱で誤判定しないため）
+          3. 非食品と判定されたら、別の聞き方でもう一度確認する
+        """
         update_langfuse("generation", input={"item_name": item_name})
-        prompt = FOOD_CLASSIFICATION_PROMPT.format(item_name=item_name)
 
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
-            "max_tokens": 20,
-            "model": settings.LLM_MODEL,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.llm_api_key}",
-            "Content-Type": "application/json",
-        }
+        if is_known_food(item_name):
+            logger.info(f"🍎 Food classification: '{item_name}' -> food (known food suffix)")
+            update_langfuse("generation", output={"is_food": True, "source": "lexicon"})
+            return {"is_food": True}
 
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    self.llm_api_url, json=payload, headers=headers, timeout=CLASSIFY_TIMEOUT_SECONDS
-                )
-                resp.raise_for_status()
-                content = (resp.json()["choices"][0]["message"]["content"] or "").strip().lower()
-        except Exception as e:
-            update_langfuse("generation", level="ERROR", status_message=f"classify_failed: {e}"[:300])
-            raise LLMExtractionError(f"classify_failed: {e}") from e
+        first_verdict = await self._ask_is_food(item_name)
+        if first_verdict is None:
+            raise LLMExtractionError("classify_unparseable")
+        if first_verdict:
+            return {"is_food": True}
 
-        if not content:
-            update_langfuse("generation", level="ERROR", status_message="classify_empty_response")
-            raise LLMExtractionError("classify_empty_response")
+        # 非食品と判定された → 別の聞き方で確認する。
+        # 判定が割れた場合は「食べ物」として扱う（見逃しより誤除外のほうが困るため）。
+        confirmed = await self._confirm_is_food(item_name)
+        if confirmed is False:
+            logger.info(f"🍎 Food classification: '{item_name}' -> non-food (confirmed)")
+            update_langfuse("generation", output={"is_food": False, "source": "llm", "confirmed": True})
+            return {"is_food": False}
 
-        is_food = not re.search(r"non[\s\-_]*food", content)
-        logger.info(
-            f"🍎 Food classification: '{item_name}' -> {'food' if is_food else 'non-food'} (raw={content[:40]!r})"
-        )
+        logger.warning(f"⚠️ Non-food verdict for '{item_name}' was not confirmed. Treating as food.")
         update_langfuse(
             "generation",
-            output={"is_food": is_food, "raw": content[:100]},
-            model=settings.LLM_MODEL,
+            level="WARNING",
+            status_message=f"non-food verdict not confirmed for '{item_name}'",
+            output={"is_food": True, "source": "llm", "confirmed": False, "first_verdict": False},
         )
-        return {"is_food": is_food}
+        return {"is_food": True}
+
+    async def _ask_is_food(self, item_name: str) -> Optional[bool]:
+        """LLMにJSONで食品判定を聞く（判定できない場合は None）。"""
+        prompt = FOOD_CLASSIFICATION_PROMPT.format(item_name=item_name)
+        content, _, _ = await self._post_llm(prompt, label="classify", max_tokens=CLASSIFY_MAX_TOKENS, json_mode=True)
+
+        data = _parse_llm_json(content)
+        if isinstance(data, dict) and "is_food" in data:
+            verdict = _coerce_bool(data["is_food"])
+            if verdict is not None:
+                return verdict
+
+        # JSONで答えなかった場合の保険（最後に出てきた food / non-food を採用）
+        verdict = _parse_is_food_text(content)
+        if verdict is None:
+            logger.warning(f"⚠️ Food classification unparseable for '{item_name}': {content[:120]!r}")
+        return verdict
+
+    async def _confirm_is_food(self, item_name: str) -> Optional[bool]:
+        """非食品判定の確認用に、別の聞き方（はい/いいえ）で聞き直す。"""
+        prompt = FOOD_CONFIRMATION_PROMPT.format(item_name=item_name)
+        content, _, _ = await self._post_llm(
+            prompt, label="classify_confirm", max_tokens=CLASSIFY_MAX_TOKENS, json_mode=False
+        )
+        return _parse_yes_no(content)
 
     @observe(capture_input=False, capture_output=False)
     async def _search_brave(self, query: str, dao: "InventoryDAO") -> str:
@@ -660,15 +842,26 @@ class ExpirationEstimator:
         update_langfuse("span", output=context)
         return context
 
-    async def _post_llm(self, prompt: str, label: str) -> Tuple[str, Optional[str], Dict[str, Any]]:
-        """llama-server (OpenAI互換) へ1回POSTし、(content, finish_reason, usage) を返す。"""
+    async def _post_llm(
+        self,
+        prompt: str,
+        label: str,
+        max_tokens: int = EXTRACTION_MAX_TOKENS,
+        json_mode: Optional[bool] = None,
+    ) -> Tuple[str, Optional[str], Dict[str, Any]]:
+        """
+        llama-server (OpenAI互換) へ1回POSTし、(content, finish_reason, usage) を返す。
+
+        json_mode=False を明示すると response_format を付けない（別形式で聞き直したいとき）。
+        """
+        use_json_mode = self._json_mode and json_mode is not False
         payload: Dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
-            "max_tokens": EXTRACTION_MAX_TOKENS,
+            "max_tokens": max_tokens,
             "model": settings.LLM_MODEL,
         }
-        if self._json_mode:
+        if use_json_mode:
             payload["response_format"] = {"type": "json_object"}
 
         headers = {
@@ -682,13 +875,13 @@ class ExpirationEstimator:
             except Exception as e:
                 raise LLMExtractionError(f"transport_error: {e}") from e
 
-            if resp.status_code in (400, 422) and self._json_mode:
+            if resp.status_code in (400, 422) and use_json_mode:
                 # llama-server が response_format に非対応だった場合は自動で無効化して1度だけやり直す
                 logger.warning(
                     f"⚠️ response_format=json_object rejected (HTTP {resp.status_code}). Disabling JSON mode."
                 )
                 self._json_mode = False
-                return await self._post_llm(prompt, label)
+                return await self._post_llm(prompt, label, max_tokens=max_tokens, json_mode=json_mode)
 
             try:
                 resp.raise_for_status()

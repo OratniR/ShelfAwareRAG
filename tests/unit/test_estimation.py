@@ -17,16 +17,20 @@ from shelf_aware.estimation import (
     ExpirationEstimator,
     LLMExtractionError,
     _build_search_context,
+    _coerce_bool,
     _coerce_days,
     _extract_days_from_text,
     _find_duration_expressions,
     _needs_retry,
+    _parse_is_food_text,
     _parse_llm_json,
+    _parse_yes_no,
     _pick_expiry_sentences,
     _resolve_days,
     _response_quality,
     _salvage_llm_fields,
     apply_estimation_outcome,
+    is_known_food,
 )
 
 
@@ -142,6 +146,111 @@ def test_response_quality_ranks_unit_resolved_highest():
     assert _response_quality({"is_food": True, "extracted_days": [2]}) == 3
     assert _response_quality({"is_food": True, "periods": ["2年"]}) == 4
     assert _response_quality({"is_food": True, "extracted_days": [2], "reason": "2年"}) == 4
+
+
+# --- 食品判定 (Phase 1) ---
+def test_is_known_food_lexicon():
+    """以前「たまに食べ物と判定されなかった」ものを辞書で確定させる。"""
+    assert is_known_food("雑塩") is True
+    assert is_known_food("豆腐") is True
+    assert is_known_food("料理酒") is True  # 「料理酒のストック」からクリーニング後
+    assert is_known_food("穀物酢") is True
+    assert is_known_food("甜麺醤") is False  # 辞書に無いものはLLMに聞く
+
+    # 非食品を食べ物と誤判定しないこと
+    assert is_known_food("キーボード") is False
+    assert is_known_food("手袋") is False
+    assert is_known_food("印鑑") is False
+    assert is_known_food("フライパン") is False  # 語尾が「パン」でも調理器具
+    assert is_known_food("機械油") is False
+    assert is_known_food("") is False
+
+
+def test_parse_is_food_text_uses_last_occurrence():
+    """
+    制約文を復唱した出力で食べ物を非食品と誤判定しないこと。
+
+    （「丸々のストックだとたまに食べ物と判定されない」の回帰テスト）
+    """
+    echo = "「food」または「non-food」の一単語のみで答えてください。豆腐はfoodです。"
+    assert _parse_is_food_text(echo) is True
+    assert _parse_is_food_text("non-food") is False
+    assert _parse_is_food_text("これは食べられません") is None
+
+
+def test_parse_yes_no():
+    assert _parse_yes_no("はい") is True
+    assert _parse_yes_no("はい、食べられます") is True
+    assert _parse_yes_no("いいえ") is False
+    assert _parse_yes_no("いいえ、食べられません") is False
+    assert _parse_yes_no("non-food") is False
+    assert _parse_yes_no("たぶん") is None
+
+
+def test_coerce_bool():
+    assert _coerce_bool(True) is True
+    assert _coerce_bool(False) is False
+    assert _coerce_bool("true") is True
+    assert _coerce_bool("false") is False
+    assert _coerce_bool("non-food") is False
+    assert _coerce_bool("はい") is True
+    assert _coerce_bool(1) is True
+    assert _coerce_bool(0) is False
+    assert _coerce_bool(None) is None
+    assert _coerce_bool("たぶん") is None
+
+
+@pytest.mark.asyncio
+async def test_classify_uses_lexicon_without_llm(estimator):
+    """辞書で確定できるものはLLMを呼ばない（Piの時間と誤判定を節約）。"""
+    client, calls = _mock_client([('{"is_food": false}', "stop")])
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._classify_item_type("雑塩")
+
+    assert result["is_food"] is True
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_classify_confirms_non_food_verdict(estimator):
+    """非食品判定は別の聞き方で確認し、2回とも非食品なら対象外にする。"""
+    client, calls = _mock_client([('{"is_food": false}', "stop"), ("いいえ", "stop")])
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._classify_item_type("キーボード")
+
+    assert result["is_food"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_classify_falls_back_to_food_when_not_confirmed(estimator):
+    """判定が割れたら食べ物として扱う（誤って「対象外」に固定しない）。"""
+    client, calls = _mock_client([('{"is_food": false}', "stop"), ("はい", "stop")])
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._classify_item_type("甜麺醤")
+
+    assert result["is_food"] is True
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_classify_ignores_prompt_echo(estimator):
+    """
+    制約文を復唱しただけの出力で非食品と判定しないこと。
+
+    （「◯◯のストックだとたまに食べ物と判定されない」の回帰テスト）
+    """
+    echo = "「food」または「non-food」の一単語のみで答えてください。玉ねぎはfoodです。"
+    client, calls = _mock_client([(echo, "stop")])
+
+    with patch("shelf_aware.estimation.httpx.AsyncClient", return_value=client):
+        result = await estimator._classify_item_type("玉ねぎ")
+
+    assert result["is_food"] is True
+    assert len(calls) == 1  # 非食品ではないので確認は不要
 
 
 # --- LLM出力の解釈 ---

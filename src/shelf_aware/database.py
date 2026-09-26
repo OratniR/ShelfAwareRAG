@@ -70,6 +70,7 @@ class InventoryDAO:
                     id TEXT PRIMARY KEY,
                     location TEXT NOT NULL,
                     updated_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP,           -- 初回登録日時（更新しても変わらない）
                     expiry_date TEXT,               -- 推定された賞味期限 (YYYY-MM-DD)
                     is_estimated INTEGER DEFAULT 0, -- 0:未処理 1:推定済 2:対象外 3:失敗
                     attempt_count INTEGER DEFAULT 0,-- 推定を試行した回数（失敗の再試行上限に使う）
@@ -113,6 +114,11 @@ class InventoryDAO:
                 self.conn.execute("ALTER TABLE items ADD COLUMN last_error TEXT")
             if "last_attempted_at" not in columns:
                 self.conn.execute("ALTER TABLE items ADD COLUMN last_attempted_at TIMESTAMP")
+            # --- 登録日（updated_at は「最終更新」なので、登録日は別に持つ）---
+            if "created_at" not in columns:
+                self.conn.execute("ALTER TABLE items ADD COLUMN created_at TIMESTAMP")
+                # 既存行の初回登録日時は残っていないため、最終更新日時で代用する
+                self.conn.execute("UPDATE items SET created_at = updated_at WHERE created_at IS NULL")
 
     def update_expiry(self, item_id: str, expiry_date: str, is_estimated: bool = True):
         """
@@ -139,23 +145,29 @@ class InventoryDAO:
         """
         アイテムの追加または場所の更新。
 
-        既存行の推定結果 (expiry_date / is_estimated / attempt_count) は保持する。
-        以前は INSERT OR REPLACE だったため、同じアイテムを登録し直すと
-        推定済みの賞味期限とステータスが消えていた（SQLiteのREPLACEはDELETE+INSERT）。
+        再登録は「新しく買った在庫」として扱い、賞味期限を推定し直す
+        （推定状態と賞味期限をリセットする。推定は呼び出し側がすぐ実行する）。
+        created_at（初回登録日時）は変更しない。
         """
         now = datetime.now().isoformat()
 
-        # 1. SQLite: 場所と更新日時のみUPSERTする
+        # 1. SQLite: 場所と更新日時をUPSERTする
         with self.conn:
             self.conn.execute(
                 """
-                INSERT INTO items (id, location, updated_at)
-                VALUES (?, ?, ?)
+                INSERT INTO items (id, location, updated_at, created_at)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     location = excluded.location,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    -- 再登録 = 在庫の入れ替え。古い賞味期限を残すと
+                    -- 「登録日より前に賞味期限がくる」状態になるため再推定する
+                    expiry_date = NULL,
+                    is_estimated = ?,
+                    attempt_count = 0,
+                    last_error = NULL
             """,
-                (name, location, now),
+                (name, location, now, now, STATUS_UNPROCESSED),
             )
 
         # 2. ChromaDB: ID(name)で上書き
@@ -363,17 +375,22 @@ class InventoryDAO:
                     SET expiry_date = ?, is_estimated = ?, updated_at = ?,
                         attempt_count = 0, last_error = NULL
                     WHERE id = ?
+                      AND (expiry_date IS NOT ? OR is_estimated IS NOT ?)
                 """,
-                    (expiry_date, is_estimated, now, item_id),
+                    (expiry_date, is_estimated, now, item_id, expiry_date, is_estimated),
                 )
             else:
+                # 変更が無い行の updated_at は書き換えない。
+                # （ダッシュボードの保存は全行に対して呼ばれるため、無条件に更新すると
+                #   「登録日」と賞味期限の前後関係が分からなくなる）
                 self.conn.execute(
                     """
                     UPDATE items
                     SET expiry_date = ?, is_estimated = ?, updated_at = ?
                     WHERE id = ?
+                      AND (expiry_date IS NOT ? OR is_estimated IS NOT ?)
                 """,
-                    (expiry_date, is_estimated, now, item_id),
+                    (expiry_date, is_estimated, now, item_id, expiry_date, is_estimated),
                 )
 
             # ChromaDB側のメタデータも更新（整合性維持のため）

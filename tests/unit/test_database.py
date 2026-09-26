@@ -69,35 +69,60 @@ def test_migration_adds_columns_to_existing_db(db_path):
 
     dao = InventoryDAO(use_chroma=False)
     try:
-        assert {"attempt_count", "last_error", "last_attempted_at"} <= _columns(dao.conn)
+        assert {"attempt_count", "last_error", "last_attempted_at", "created_at"} <= _columns(dao.conn)
         # 既存データが保持され、新カラムはデフォルト値で埋まる
         row = _row(dao.conn, "醤油")
         assert row["expiry_date"] == "2026-12-31"
         assert row["is_estimated"] == 1
         assert row["attempt_count"] == 0
         assert row["last_error"] is None
+        # 初回登録日時は残っていないので updated_at で代用する
+        assert row["created_at"] == "2026-01-01T00:00:00"
     finally:
         dao.conn.close()
 
 
 def test_new_db_has_all_columns(dao):
-    assert {"expiry_date", "is_estimated", "attempt_count", "last_error", "last_attempted_at"} <= _columns(dao.conn)
+    assert {
+        "expiry_date",
+        "is_estimated",
+        "attempt_count",
+        "last_error",
+        "last_attempted_at",
+        "created_at",
+    } <= _columns(dao.conn)
 
 
-# --- 再登録で推定結果が消えないこと ---
-def test_add_or_update_preserves_estimation_state(dao):
-    """以前は INSERT OR REPLACE のため、再登録で賞味期限とステータスが消えていた。"""
-    dao.add_or_update_item("豆板醤", "冷蔵庫")
-    dao.update_expiry("豆板醤", "2027-03-01")
+# --- 再登録（新しい在庫）の扱い ---
+def test_add_or_update_resets_estimation_for_fresh_stock(dao):
+    """
+    再登録は「新しく買った在庫」として扱い、賞味期限を推定し直す。
 
-    dao.add_or_update_item("豆板醤", "パントリー")  # 場所だけ変更
+    古い賞味期限を残すと「登録日より前に賞味期限がくる」状態になるため。
+    """
+    dao.add_or_update_item("豆腐", "冷蔵庫")
+    dao.update_expiry("豆腐", "2026-09-26")
+    assert _row(dao.conn, "豆腐")["is_estimated"] == STATUS_ESTIMATED
 
-    row = _row(dao.conn, "豆板醤")
+    dao.add_or_update_item("豆腐", "冷蔵庫")  # 同じ場所でも再登録 = 新しい在庫
+
+    row = _row(dao.conn, "豆腐")
+    assert row["expiry_date"] is None
+    assert row["is_estimated"] == STATUS_UNPROCESSED
+    assert row["attempt_count"] == 0
+    assert row["last_error"] is None
+
+
+def test_add_or_update_keeps_created_at(dao):
+    """created_at（初回登録日時）は再登録で変わらない。"""
+    dao.add_or_update_item("豆腐", "冷蔵庫")
+    created_at = _row(dao.conn, "豆腐")["created_at"]
+
+    dao.add_or_update_item("豆腐", "パントリー")
+
+    row = _row(dao.conn, "豆腐")
+    assert row["created_at"] == created_at
     assert row["location"] == "パントリー"
-    assert row["expiry_date"] == "2027-03-01"
-    assert row["is_estimated"] == STATUS_ESTIMATED
-    # 推定し直しにならないので試行回数は増えない
-    assert row["attempt_count"] == 1
 
 
 # --- ステータス遷移 ---
@@ -187,6 +212,24 @@ def test_update_item_state_does_not_reset_attempts_for_other_statuses(dao):
     row = _row(dao.conn, "豆板醤")
     assert row["attempt_count"] == 2
     assert row["is_estimated"] == STATUS_ESTIMATED
+
+
+def test_update_item_state_skips_unchanged_rows(dao):
+    """
+    ダッシュボードの保存は全行に対して呼ばれるため、変更が無い行の updated_at を
+    書き換えない（「登録日より前に賞味期限」の混乱を防ぐ）。
+    """
+    dao.add_or_update_item("豆板醤", "棚")
+    before = _row(dao.conn, "豆板醤")
+
+    dao.update_item_state("豆板醤", None, STATUS_UNPROCESSED)  # 同じ値で保存
+
+    after = _row(dao.conn, "豆板醤")
+    assert after["updated_at"] == before["updated_at"]
+
+    # 値が変われば更新される
+    dao.update_item_state("豆板醤", "2027-01-01", STATUS_ESTIMATED)
+    assert _row(dao.conn, "豆板醤")["expiry_date"] == "2027-01-01"
 
 
 def test_brave_usage_counter(dao):

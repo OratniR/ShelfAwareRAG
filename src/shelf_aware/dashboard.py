@@ -42,7 +42,9 @@ def get_inventory_df():
     else:
         df["expiry_date"] = pd.NaT
 
-    # 2. 登録日/更新日 (updated_at) の変換
+    # 2. 登録日/更新日 (created_at / updated_at) の変換
+    if "created_at" in df.columns:
+        df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")
     if "updated_at" in df.columns:
         df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce")
 
@@ -103,7 +105,7 @@ else:
     if search_q:
         df = df[df.apply(lambda row: search_q.lower() in row.astype(str).str.lower().values, axis=1)]
 
-    # 表示・編集するカラムの定義（updated_at を追加）
+    # 表示・編集するカラムの定義（登録日と更新日を分けて表示）
     display_cols = [
         "削除",
         "id",
@@ -112,6 +114,7 @@ else:
         "is_estimated",
         "attempt_count",
         "last_error",
+        "created_at",
         "updated_at",
     ]
 
@@ -133,11 +136,18 @@ else:
             # 失敗の原因をダッシュボードで確認できるようにする（読み取り専用）
             "attempt_count": st.column_config.NumberColumn("試行回数", width="small", disabled=True),
             "last_error": st.column_config.TextColumn("失敗理由", width="medium", disabled=True),
-            # 【追加】登録日（更新日）の設定
-            "updated_at": st.column_config.DatetimeColumn(
+            # 登録日（初回登録。再登録やダッシュボード保存では変わらない）
+            "created_at": st.column_config.DatetimeColumn(
                 "登録日",
-                format="MM/DD HH:mm",  # 見やすいように年月日時分だけ表示
-                width="medium",
+                format="MM/DD HH:mm",
+                width="small",
+                disabled=True,
+            ),
+            # 更新日（場所の変更や賞味期限の更新があった日時）
+            "updated_at": st.column_config.DatetimeColumn(
+                "更新日",
+                format="MM/DD HH:mm",
+                width="small",
                 disabled=True,  # 自動更新されるものなので編集不可にする
             ),
         },
