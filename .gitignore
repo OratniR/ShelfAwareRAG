@@ -13,7 +13,12 @@ wheels/
 .env
 
 # Data
+# ローカルの実データ（SQLite）は端末ごとに違うためGit管理しない。
+# ※過去にコミットされていた場合は `git rm --cached data/inventory.db*` で管理から外す
+#   （--cached なので作業ツリーのファイルは消えない）
 data/chroma_db/
+data/*.db
+data/*.db-*
 data/*.gguf
 data/models/
 

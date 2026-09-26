@@ -183,6 +183,33 @@ docker compose up -d --force-recreate
 「Python側は固定オフセット `+09:00`・コンテナの `TZ` は POSIX形式 `JST-9`」で扱う。
 日本はサマータイムが無いので固定オフセットで正しい。
 
+### ローカルデータ（SQLite）はGit管理外
+
+`data/inventory.db`（と `-wal` / `-shm`）は**端末ごとの実データ**なのでGit管理しない（`.gitignore` 済み）。
+`git pull` で上書きされることはない。新規クローンではDBが無い状態から始まり、初回起動時に
+空のDBが自動作成される。
+
+```bash
+# バックアップ（書き込みが無い状態でコピーする）
+docker compose stop rag-api dashboard
+mkdir -p ~/shelfaware_backup && cp -a data/inventory.db* ~/shelfaware_backup/
+docker compose start rag-api dashboard
+# SQLiteのオンラインバックアップを使う場合
+sqlite3 data/inventory.db ".backup '$HOME/shelfaware_backup/inventory.db'"
+```
+
+過去のコミットで既にGit管理に入ってしまっている端末での**一度だけの作業**
+（`--cached` なので作業ツリーのDBは消えない）:
+
+```bash
+git rm --cached data/inventory.db data/inventory.db-shm data/inventory.db-wal
+git commit -m "chore: ローカルDBをGit管理から外す"   # pullを確実に通すためコミットまで行う
+git pull
+```
+
+注意: `git checkout -- data/` や `git stash` で `data/` を触ると、古いスナップショットで
+実データが上書きされる。DBをGitで戻さないこと。
+
 ### 期間の単位はLLMに換算させない
 
 LLMには検索結果の表記を**そのまま**（`"2年"`, `"半年"`, `"1ヶ月"`）出力させ、日数への換算は
